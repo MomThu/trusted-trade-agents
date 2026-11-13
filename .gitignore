@@ -1,0 +1,25 @@
+# secrets
+.env
+.env.*
+!.env.example
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# node
+node_modules/
+dist/
+build/
+
+# data (download from the Valio resource portal, don't commit)
+data/raw/
+*.db
+*.sqlite
+
+# misc
+.DS_Store
+.idea/
+.vscode/
