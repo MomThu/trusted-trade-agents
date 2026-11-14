@@ -26,6 +26,14 @@ AI_CROSSCHECK = os.getenv("AI_CROSSCHECK", "0") == "1"
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-4-hydrogen")
 
+# Public hostnames this server answers on (e.g. my-app.onrender.com). Empty = local only.
+PUBLIC_HOSTS = [h.strip() for h in (os.getenv("PUBLIC_HOSTS") or os.getenv("RENDER_EXTERNAL_HOSTNAME") or "").split(",") if h.strip()]
+PORT = int(os.getenv("PORT", "8000"))
+# Running on a public cloud host (set by the deploy config). Requires a real STAFF_KEY.
+PUBLIC_DEPLOY = os.getenv("PUBLIC_DEPLOY") == "1" or bool(PUBLIC_HOSTS)
+# Hackathon demo: the human-side pages open without the staff key. Real authentication and roles are a next step.
+OPEN_DEMO = os.getenv("OPEN_DEMO") == "1"
+
 _secret = os.getenv("OFFER_SIGNING_SECRET", "")
 if not _secret:
     # Dev fallback: a per-process secret, so offers die on restart. Set it in .env.

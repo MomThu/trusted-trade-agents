@@ -27,6 +27,8 @@ from order_service.offers import find_offers
 from mcp_server.server import mcp
 
 STAFF_KEY = os.getenv("STAFF_KEY", "demo-staff")
+if config.PUBLIC_DEPLOY and STAFF_KEY == "demo-staff" and not config.OPEN_DEMO:
+    raise RuntimeError("Public deployment: set STAFF_KEY to a secret value (the demo default would let anyone approve orders)")
 STATIC = Path(__file__).resolve().parent / "static"
 
 mcp_app = mcp.streamable_http_app()
@@ -68,6 +70,8 @@ def agent_buyer(authorization: str | None = Header(None), x_api_key: str | None 
 
 
 def staff(x_staff_key: str | None = Header(None)) -> str:
+    if config.OPEN_DEMO:          # open demo: no staff key (authentication + roles are a production next step)
+        return "staff"
     if x_staff_key != STAFF_KEY:
         raise HTTPException(401, "Staff key required (human-only endpoint)")
     return "staff"
@@ -238,7 +242,7 @@ _agent_lock = asyncio.Lock()
 @app.post("/api/ui/agent/run", tags=["demo"])
 async def ui_agent_run(body: AgentRun, request: Request, _: str = Depends(staff)):
     """Run the reference buyer agent (an EXTERNAL client that talks to /mcp like any vendor's agent)."""
-    url = str(request.base_url).rstrip("/") + "/mcp"
+    url = f"http://127.0.0.1:{config.PORT}/mcp"     # the reference agent is a normal MCP client of this server
     events: list[dict] = []
 
     def on_event(e: dict):

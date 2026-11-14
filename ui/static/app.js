@@ -1,5 +1,17 @@
 // Approval UI. Talks only to the human-only backend (/api/ui), never to agent tools.
-const STAFF = { "X-Staff-Key": "demo-staff", "Content-Type": "application/json" };
+// Staff key for the human-only endpoints. Locally the demo default works; on a public deployment the page asks once
+// and keeps the key for this browser tab only.
+const STAFF = { "X-Staff-Key": (() => { try { return sessionStorage.getItem("staffKey") || "demo-staff"; } catch { return "demo-staff"; } })(),
+                "Content-Type": "application/json" };
+let askingKey = null;
+function askStaffKey() {
+  if (!askingKey) askingKey = new Promise((ok) => {
+    const k = (prompt("Staff key for the approval UI (from the submission notes):") || "").trim();
+    if (k) { STAFF["X-Staff-Key"] = k; try { sessionStorage.setItem("staffKey", k); } catch {} }
+    askingKey = null; ok(!!k);
+  });
+  return askingKey;
+}
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const eur = (x) => "€" + Number(x || 0).toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -7,8 +19,9 @@ const qty = (x) => Number(x).toLocaleString("en-GB", { maximumFractionDigits: 2 
 const when = (iso) => iso ? new Date(iso).toLocaleString("en-GB", { weekday: "short", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "–";
 let buyers = [];
 
-async function api(path, opts = {}) {
+async function api(path, opts = {}, retried = false) {
   const r = await fetch(path, { headers: STAFF, ...opts });
+  if (r.status === 401 && !retried && (await askStaffKey())) return api(path, opts, true);
   const body = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(body.detail || r.statusText);
   return body;

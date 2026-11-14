@@ -173,6 +173,14 @@ Order states: `placed`, `pending_approval`, `approved` (= placed after sign-off)
 - **Gemini** for the reference buyer agent only; it is outside Valio's trust boundary.
 
 ## 6. Next steps to production
+0. **Authentication and roles for people.** Today the human side uses one shared staff key (the public hackathon demo
+   is open), and approvers type their own name. Production: real logins (SSO) so the audit log records the actual
+   person, and role-based authorization:
+   - **customer approver**: approve, reject and cancel *their own company's* orders, read their audit log
+   - **customer admin**: also edit their allergen policy and propose limits within Valio's ceiling
+   - **Valio admin**: set limit ceilings, issue and revoke customer API keys, read every customer's audit log
+   - **agents**: unchanged, a customer API key limited to the five agent tools and that customer's data.
+   Split the UI into a customer portal and a Valio admin page.
 1. `place_order` calls Valio's real order backend instead of the reference order service.
 2. Ed25519-signed offers with a published public key, so any agent or auditor can verify offers themselves.
 3. Customer-specific prices/availability (the APIs already take `customer`); keys issued at onboarding, hashed, rotated; SSO for the approval UI.

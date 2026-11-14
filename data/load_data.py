@@ -21,8 +21,9 @@ from pathlib import Path
 from data.vocab import LABELS
 
 ROOT = Path(__file__).resolve().parent
-RAW = ROOT / "raw"
-DB_PATH = ROOT / "valio.db"
+_DATA = Path(__import__("os").getenv("VALIO_DATA_DIR") or ROOT)   # e.g. a cloud volume mounted at /data
+RAW = _DATA / "raw"
+DB_PATH = _DATA / "valio.db"
 PRODUCTS = RAW / "valio_aimo_junction26_product_data.json"
 RELIABILITY = RAW / "valio_aimo_junction26_delivery_reliability.csv"
 CARBON = RAW / "valio_aimo_junction26_carbon_footprint.csv"
@@ -150,6 +151,13 @@ def parse_product(p: dict, reliability: dict, carbon: dict) -> dict:
     }
 
 
+def iter_products(path: Path = PRODUCTS):
+    """Stream products one by one (the file is ~87 MB): keeps peak memory low enough for small hosts."""
+    import ijson
+    with open(path, "rb") as f:
+        yield from ijson.items(f, "item", use_float=True)
+
+
 def read_csv_map(path: Path, value_col: str) -> dict[str, float]:
     out = {}
     with open(path, newline="", encoding="utf-8") as f:
@@ -180,12 +188,11 @@ CREATE INDEX idx_products_category ON products(category);
 def build(db_path: Path = DB_PATH) -> dict:
     rel = read_csv_map(RELIABILITY, "deliveryReliability")
     carbon = read_csv_map(CARBON, "AVG kg CO2-eq/kg")
-    raw = json.loads(PRODUCTS.read_text(encoding="utf-8"))
     con = sqlite3.connect(db_path)
     con.executescript(SCHEMA)
     stats = {"products": 0, "english_name": 0, "allergen_data": 0, "litres": 0, "kg": 0,
              "substitution_rules": 0, "reliability": 0, "carbon": 0, "skipped_deleted": 0}
-    for p in raw:
+    for p in iter_products():
         if p.get("deleted"):
             stats["skipped_deleted"] += 1
             continue
@@ -245,7 +252,7 @@ def download(dest_dir: Path = RAW) -> list[Path]:
                     for chunk in r.iter_bytes(1 << 20):
                         f.write(chunk)
             tmp.replace(out)                              # never leave a half-written file behind
-            print(f"  downloaded {name:<22} -> {out.relative_to(ROOT.parent) if out.is_relative_to(ROOT.parent) else out} "
+            print(f"  downloaded {name:<22} -> {out} "
                   f"({out.stat().st_size / 1e6:.1f} MB)")
             saved.append(out)
     return saved
@@ -265,12 +272,14 @@ def main() -> None:
     if args.sample:
         rel = read_csv_map(RELIABILITY, "deliveryReliability")
         carbon = read_csv_map(CARBON, "AVG kg CO2-eq/kg")
-        for p in json.loads(PRODUCTS.read_text(encoding="utf-8"))[: args.sample]:
+        for i, p in enumerate(iter_products()):
+            if i >= args.sample:
+                break
             print(json.dumps(parse_product(p, rel, carbon), ensure_ascii=False, indent=2))
         return
     stats = build()
     n = stats["products"]
-    print(f"Loaded {n} products into {DB_PATH.relative_to(ROOT.parent)}")
+    print(f"Loaded {n} products into {DB_PATH}")
     for k, v in stats.items():
         if k != "products":
             print(f"  {k:<20} {v:>6}" + (f"  ({v / n:.0%})" if k not in ("substitution_rules", "skipped_deleted") else ""))

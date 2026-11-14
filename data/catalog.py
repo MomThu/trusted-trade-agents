@@ -6,6 +6,7 @@ called later, and only for the top candidates.
 from __future__ import annotations
 
 import json
+import os
 import re
 import sqlite3
 import threading
@@ -14,7 +15,7 @@ from pathlib import Path
 
 from data.vocab import ALLERGENS, LABEL_WORDS, LABELS, SYNONYMS, WEIGHT_SALES_UNITS
 
-DB_PATH = Path(__file__).resolve().parent / "valio.db"
+DB_PATH = Path(os.getenv("VALIO_DATA_DIR") or Path(__file__).resolve().parent) / "valio.db"
 _local = threading.local()
 
 

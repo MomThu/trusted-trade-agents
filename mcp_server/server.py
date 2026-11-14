@@ -43,9 +43,12 @@ mcp = FastMCP(
     instructions=INSTRUCTIONS,
     stateless_http=True,
     transport_security=TransportSecuritySettings(
-        enable_dns_rebinding_protection=True,
-        allowed_hosts=["localhost", "localhost:*", "127.0.0.1", "127.0.0.1:*"],
-        allowed_origins=["http://localhost:*", "http://127.0.0.1:*"],
+        # DNS-rebinding protection guards servers meant to be reachable only from this machine. On a public cloud
+        # host whose hostname is not configured, customer API keys are the protection, so it is switched off.
+        enable_dns_rebinding_protection=not (config.PUBLIC_DEPLOY and not config.PUBLIC_HOSTS),
+        allowed_hosts=["localhost", "localhost:*", "127.0.0.1", "127.0.0.1:*"]
+                      + [h for host in config.PUBLIC_HOSTS for h in (host, f"{host}:*")],
+        allowed_origins=["http://localhost:*", "http://127.0.0.1:*"] + [f"https://{h}" for h in config.PUBLIC_HOSTS],
     ),
 )
 

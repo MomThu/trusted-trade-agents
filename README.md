@@ -19,6 +19,9 @@ Buyer (person) ── plain words ──> Buyer agent (any vendor) ── JSON t
 
 ## Quick start
 
+Requirements: Python 3.11+ (3.12 recommended; `uv` is used if installed, otherwise `python3 -m venv`), internet access
+to Valio's mock API, and a Chromium-based browser (Chrome/Edge) for the voice features.
+
 1. `cp .env.example .env` and fill in:
 
    | Variable | Needed for | Notes |
@@ -66,10 +69,11 @@ BUYER_API_KEY=demo-hotel-aurora-key .venv/bin/python -m mcp_server.server       
 
 | The agent decides alone | A human must sign off | Rejected / error back to the agent |
 |---|---|---|
-| Orders within the buyer's spend limit, with no risk flags. Placed at once, cancellable until the product's order cut-off | Over the spend limit · any substitution (if the mandate says so) · missing allergen data for an excluded allergen · unknown supplier stock · cut-off passed · later than requested · low delivery reliability · unusual quantity vs. history · price rose since the offer · partial fulfilment · **the agent declared a doubt** (`unresolved`) · **AI cross-check suspects a misunderstanding** | Sales block, not deliverable, no price (rejected) · wrong lot size, lines don't add up, stock too low, label/allergen conflict, tampered or expired offer (precise error, agent retries) |
+| Orders within the buyer's spend limit, with no risk flags. Placed at once, cancellable until the product's order cut-off | Over the spend limit, per order **or** together with what the agent placed on its own in the last 24 h (splitting does not help) · any substitution (if the mandate says so) · missing allergen data for an excluded allergen · unknown supplier stock · cut-off passed · later than requested · low delivery reliability · unusual quantity vs. history · price rose since the offer · partial fulfilment · **the agent declared a doubt** (`unresolved`) · **AI cross-check suspects a misunderstanding** | Sales block, not deliverable, no price (rejected) · wrong lot size, lines don't add up, stock too low, label/allergen conflict, tampered or expired offer (precise error, agent retries) |
 
 The agent can never change its own limits: mandates, approvals and cancellations exist only on the human side.
-Every step is in the audit log, readable by the buyer and by Valio.
+Approving re-checks the order cut-off, live stock and live price before placing (a higher price goes back to the
+approver). Every step is in the audit log, readable by the buyer and by Valio.
 
 ## Demo buyers
 
@@ -84,8 +88,19 @@ Edit them in the **Mandates** tab (changes are logged) or in `order_service/buye
 ## Demo guide
 
 ### Before you present
-1. `./run.sh` and open http://localhost:8000. Check the top bar shows `Valio API ✓` (and `Gemini ✓` for free text).
-2. Click **Reset demo**. This clears orders and the audit log, turns the demo overlay off, and seeds Hotel Aurora's milk history.
+1. Open the app: locally with `./run.sh` → http://localhost:8000, or the deployed link
+   https://momthu--trusted-trade-agents.us-east.modal.run (no password). Check the top bar:
+
+   | Status | Needed for | If it shows ✗ |
+   |---|---|---|
+   | `Valio API ✓ online` | everything (live price and stock) | Valio's mock API is down or the key is wrong: nothing can be ordered |
+   | `Gemini ✓` | free-text agent, AI cross-check | scripted runs 1–5 still work |
+   | `ElevenLabs ✓` | 🎙 Speak and read-aloud | type instead of speaking |
+
+   For voice, use Chrome or Edge and allow the microphone once.
+2. Click **Reset demo**. This clears orders and the audit log, turns the demo overlay off, and seeds Hotel Aurora's milk
+   history (4 past weekly orders, so "our usual milk" and "unusual quantity" have something to compare with).
+   Reset again before every rehearsal: running the same case twice can trip the 24-hour spend limit, which is correct.
 3. If the UI looks outdated after a code change, hard-reload once (`Cmd+Shift+R`).
 
 ### 2-minute pitch flow
@@ -101,7 +116,8 @@ Edit them in the **Mandates** tab (changes are logged) or in `order_service/buye
 ### Longer walkthrough (extra points)
 - **Run 3** (school potatoes): the agent declares no allergens, Valio still applies the school's list; potatoes have
   no allergen statement, so a human decides. Open **Mandates** to show the allergen checklist and who confirmed it.
-- **Run 5** (price rise): the badge *Offered €1.01 → now €1.09* on the approval card.
+- **Run 5** (price rise): the badge *Offered €1.01 → now €1.09* on the approval card. When you approve, Valio
+  re-checks the live price; with the overlay off it is €1.01 again, so the order is placed at the lower price.
 - **Free text** (Gemini): try the cases below, especially E (the chef's cheese) to show the agent's doubt and the AI
   cross-check sending the order to a human.
 - **Provenance:** call `find_offers` at `/docs` and show `provenance` and `flags` on an offer.
@@ -149,7 +165,8 @@ Chef speaks ──> ElevenLabs speech-to-text ──> buyer agent (Gemini) ─�
 Chef hears <── ElevenLabs text-to-speech <── agent's short answer ("waiting for your approval because…")
 ```
 
-1. Add `ELEVENLABS_API_KEY` to `.env` and restart. The top bar shows `ElevenLabs ✓`.
+1. Add `ELEVENLABS_API_KEY` to `.env` and restart. The top bar shows `ElevenLabs ✓`. Use Chrome or Edge and allow the
+   microphone when asked (it works on `localhost` without HTTPS).
 2. **Agent console → Free text:** pick the buyer, click **🎙 Speak**, say the request, click **■ Stop**.
    The text box fills in **live while you speak** (ElevenLabs Scribe realtime over WebSocket; any language, Finnish
    works, e.g. *"Tarvitsen 60 litraa laktoositonta maitoa maanantaiksi"*). On Stop the agent runs with that text.
@@ -162,6 +179,21 @@ The buyer's exact words, spoken or typed, are kept verbatim in `need.text`, so t
 said. Settings: `ELEVENLABS_VOICE_ID`, `ELEVENLABS_TTS_MODEL`, `ELEVENLABS_STT_MODEL`, `ELEVENLABS_REALTIME_MODEL`
 (see `.env.example`). The API key needs the speech-to-text and text-to-speech permissions.
 The key stays on the server; the browser only talks to `/api/ui/agent/voice/*`.
+
+## What is real and what is simulated
+
+| Real (live) | Simulated or ours |
+|---|---|
+| Valio's price, availability and ping APIs, and the product, reliability and carbon files (downloaded from Valio's API) | **Order placement:** Valio has no order API, so orders are stored in our own order service (`orders.db`) |
+| Catalog search, signed offers, both gates, approvals, audit log | **Scripted demo runs:** the buyer's words → declared need is pre-written in `demo/presets.json`; the agent's behaviour is fixed so runs are reproducible |
+| The Gemini agent in free text and voice; the AI cross-check; ElevenLabs speech | **Demo overlay** for runs 1 and 5 (partial stock, price rise), always labelled |
+| | **Order history:** there is no history API, so Reset seeds 4 past orders for Hotel Aurora |
+| | **Customers and keys:** three demo buyers with demo API keys in `order_service/buyers.json` |
+
+**Known limitations** (see the next steps in [docs/INTERFACE.md](docs/INTERFACE.md)): the human side has no real
+login yet (the public demo is open; locally a shared demo staff key is used), so there are no per-person roles;
+mandates live in a JSON file; prices are shown excl. VAT and without deposits; a search and the order it
+led to are not yet linked in the audit log.
 
 ## Demo overlay (top bar)
 
@@ -177,6 +209,41 @@ Off by default; every affected offer and order carries a *Demo overlay data* bad
 Real exceptions from the live mock need no overlay: Terminal products (supplier stock unknown, cut-off passed),
 products with no delivery dates, out-of-stock fresh salmon, limited stock (Arla milk: 51 units), missing allergen data.
 
+## Deploy (public link) on Modal
+
+The app runs as one container on [Modal](https://modal.com) (Junction participants get $100 in credits). Valio's data
+is **never uploaded from your machine**: on first start the container downloads it with `VALIO_API_KEY` into a Modal
+Volume, where orders and the audit log are also kept, so they survive restarts. One warm container (~80 MB RAM) costs
+cents per hour; `min_containers=1` avoids cold starts during judging.
+
+```bash
+.venv/bin/pip install modal          # deploy tool (on macOS, if it fails building cbor2: pip install "cbor2<6" modal)
+.venv/bin/modal setup                # once: log in via the browser
+.venv/bin/modal secret create trusted-trade-agents \
+    VALIO_API_KEY=... STAFF_KEY=<password for reviewers> OFFER_SIGNING_SECRET=$(openssl rand -hex 32) \
+    GEMINI_API_KEY=... ELEVENLABS_API_KEY=...
+.venv/bin/modal deploy modal_app.py  # prints https://<workspace>--trusted-trade-agents.modal.run
+```
+
+Open the URL and click **Reset demo**. Update after code changes with `modal deploy modal_app.py` again; stop it with
+`modal app stop trusted-trade-agents`.
+
+Public-mode notes (`modal_app.py` sets `PUBLIC_DEPLOY=1` and `OPEN_DEMO=1`):
+- **Open demo:** the approval UI opens without a password so reviewers can try everything. Anyone with the link can
+  approve, reset and run the agent (which uses our Gemini/ElevenLabs credits). Set `OPEN_DEMO=0` and a `STAFF_KEY`
+  secret to require a key again; with `OPEN_DEMO=0` the server refuses to start while the key is still `demo-staff`.
+- Agents still need a customer API key: the agent side keeps its authentication and per-customer scope.
+- MCP's DNS-rebinding check (meant for servers reachable only from your own machine) is off unless `PUBLIC_HOSTS`
+  lists the exact hostname(s).
+- Only code is uploaded: `.env`, local databases and Valio's files are excluded.
+
+**Any other Docker host:** `docker build -t trusted-trade-agents .` then
+`docker run -p 8000:8000 --env-file .env -e PUBLIC_DEPLOY=1 -e STAFF_KEY=<secret> trusted-trade-agents`
+(mount a volume and set `ORDERS_DB=/data/orders.db` and `VALIO_DATA_DIR=/data` to keep data across restarts).
+
+**For reviewers:** open the URL, then **Agent console**. External
+agents connect to `https://<host>/mcp` with a demo buyer key (see "Demo buyers"); the OpenAPI docs are at `/docs`.
+
 ## Troubleshooting
 
 | Symptom | Fix |
@@ -187,12 +254,16 @@ products with no delivery dates, out-of-stock fresh salmon, limited stock (Arla 
 | Top bar shows `Valio API ✗ not responding`, or offers say "Valio live data unavailable" | Valio's mock API is down or unreachable (check network and `VALIO_API_KEY`); nothing is offered without live price and stock |
 | An offer "expired" | Offers live 15 minutes; the agent calls `find_offers` again |
 | Agent console shows "No order was created" | The agent stopped to ask the buyer; read its last message |
+| A case that was placed before now goes to approval with "over the limit in the last 24 h" | The 24-hour spend limit counted earlier runs: click **Reset demo** |
+| `ElevenLabs ✗`, or speech fails with 401 | Use a full `sk_…` key in `.env` (not `.env.example`) with speech-to-text and text-to-speech permissions |
+| "Microphone not available" | Allow the microphone in the browser's site settings; use Chrome or Edge |
 
 ## Repository
 
 ```
-data/          load_data.py (JSON + CSVs → SQLite), catalog.py (search, allergens, units), vocab.py (labels, allergen groups, synonyms)
-order_service/ valio_client.py (APIs: cap 50, 2-min cache, quirks), offers.py (find_offers + plan), signing.py (HMAC offers),
+data/          load_data.py (download from Valio's API + JSON/CSVs → SQLite), catalog.py (search, allergens, units), vocab.py (labels, allergen groups, synonyms)
+deploy/        start.sh (container entrypoint); Dockerfile and modal_app.py (Modal deploy) at the repo root
+order_service/ valio_client.py (price, availability, ping; cap 50, 2-min cache, quirks), offers.py (find_offers + plan), signing.py (HMAC offers),
                checks.py (gate 1), policy.py (gate 2), orders.py (states, approve/reject/cancel), db.py (orders + audit),
                buyers.json (customers + mandates), scenarios.json (demo overlays), crosscheck.py (AI cross-check)
 mcp_server/    server.py: the 5 agent tools
@@ -200,7 +271,7 @@ ui/            app.py (FastAPI: /mcp, /v1, /api/ui), static/ (approval UI)
 agent/         buyer_agent.py: reference buyer agent (Gemini or scripted), external MCP client; voice.py: ElevenLabs speech
 demo/          presets.json: the scripted demo runs
 docs/          INTERFACE.md: tools, data contract, rules, assumptions, next steps
-tests/         offline tests of search, plan, both gates, signing, allergen policy
+tests/         25 offline tests: search, plan, both gates, signing, allergen policy, approvals, spend limit
 ```
 
 See **[docs/INTERFACE.md](docs/INTERFACE.md)** for the interface spec, rules, assumptions and the path to production.
