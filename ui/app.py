@@ -293,6 +293,16 @@ async def ui_voice_stt(audio: UploadFile = File(...), _: str = Depends(staff)):
         raise HTTPException(502, str(e))
 
 
+@app.post("/api/ui/agent/voice/realtime-token", tags=["demo"])
+async def ui_voice_realtime_token(_: str = Depends(staff)):
+    """Short-lived token for live (streaming) transcription straight from the browser to ElevenLabs."""
+    try:
+        return {"token": await voice.realtime_token(),
+                "model_id": os.getenv("ELEVENLABS_REALTIME_MODEL", "scribe_v2_realtime")}
+    except voice.VoiceError as e:
+        raise HTTPException(502, str(e))
+
+
 class SpeakBody(BaseModel):
     text: str
 

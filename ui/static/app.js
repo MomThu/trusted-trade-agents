@@ -269,7 +269,7 @@ async function speak(text) {
   } catch (e) { $("#voice-status").textContent = "Speech failed: " + e.message; }
 }
 
-async function startRecording() {
+async function startBatchRecording() {
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     recorder = new MediaRecorder(stream);
@@ -277,7 +277,7 @@ async function startRecording() {
     recorder.ondataavailable = (e) => e.data.size && chunks.push(e.data);
     recorder.onstop = async () => {
       stream.getTracks().forEach((t) => t.stop());
-      $("#mic").classList.remove("recording"); $("#mic").textContent = "🎙 Speak";
+      micUi(false);
       const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
       $("#voice-status").textContent = "📝 Transcribing… (ElevenLabs speech-to-text)";
       const form = new FormData();
@@ -294,10 +294,101 @@ async function startRecording() {
       } catch (e) { $("#voice-status").textContent = "Transcription failed: " + e.message; }
     };
     recorder.start();
-    $("#mic").classList.add("recording"); $("#mic").textContent = "■ Stop";
+    micUi(true);
     $("#voice-status").textContent = "🎙 Listening… click Stop when done.";
   } catch (e) { $("#voice-status").textContent = "Microphone not available: " + e.message; }
 }
-$("#mic").onclick = () => (recorder && recorder.state === "recording" ? recorder.stop() : startRecording());
+
+// Live transcription: mic -> 16 kHz PCM -> ElevenLabs Scribe realtime (WebSocket). The text box updates while
+// the buyer speaks. Falls back to record-then-transcribe if streaming is unavailable.
+let live = null;
+const MIC_IDLE = "🎙 Speak";
+
+function micUi(on) {
+  $("#mic").classList.toggle("recording", on);
+  $("#mic").textContent = on ? "■ Stop" : MIC_IDLE;
+}
+
+function floatTo16kPcm(input, inRate) {
+  const ratio = inRate / 16000, n = Math.floor(input.length / ratio), out = new Int16Array(n);
+  for (let i = 0; i < n; i++) {
+    const s = Math.max(-1, Math.min(1, input[Math.floor(i * ratio)]));
+    out[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+  }
+  return out;
+}
+function b64(int16) {
+  const bytes = new Uint8Array(int16.buffer); let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+
+async function startLive() {
+  const tok = await api("/api/ui/agent/voice/realtime-token", { method: "POST" });
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
+  const ws = new WebSocket(`wss://api.elevenlabs.io/v1/speech-to-text/realtime?model_id=${encodeURIComponent(tok.model_id)}` +
+    `&audio_format=pcm_16000&commit_strategy=vad&token=${encodeURIComponent(tok.token)}`);
+  await new Promise((ok, fail) => { ws.onopen = ok; ws.onerror = () => fail(new Error("could not connect to ElevenLabs realtime")); });
+
+  const ctx = new AudioContext();
+  const src = ctx.createMediaStreamSource(stream);
+  const proc = ctx.createScriptProcessor(4096, 1, 1);          // ~85-250 ms chunks; simple and widely supported
+  const st = { ws, ctx, stream, src, proc, committed: [], partial: "", closed: false, finalWaiter: null };
+  const box = $("#llm-text");
+  const render = () => { box.value = [...st.committed, st.partial].filter(Boolean).join(" "); };
+
+  ws.onmessage = (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.message_type === "partial_transcript") { st.partial = m.text || ""; render(); }
+    else if (m.message_type === "committed_transcript") {
+      const t = (m.text || "").trim() || st.partial.trim();      // an empty commit keeps the last partial
+      if (t) st.committed.push(t);
+      st.partial = ""; render();
+      if (st.finalWaiter) st.finalWaiter();
+    } else if (/error|exceeded|limited|exhausted/.test(m.message_type)) {
+      $("#voice-status").textContent = `ElevenLabs: ${m.message_type} ${m.error || ""}`;
+    }
+  };
+  ws.onclose = () => { st.closed = true; if (st.finalWaiter) st.finalWaiter(); };
+  proc.onaudioprocess = (e) => {
+    if (ws.readyState !== WebSocket.OPEN) return;
+    const pcm = floatTo16kPcm(e.inputBuffer.getChannelData(0), ctx.sampleRate);
+    ws.send(JSON.stringify({ message_type: "input_audio_chunk", audio_base_64: b64(pcm), commit: false, sample_rate: 16000 }));
+  };
+  src.connect(proc); proc.connect(ctx.destination);
+  box.value = ""; lastSpoken = null;
+  live = st;
+  micUi(true);
+  $("#voice-status").textContent = "🎙 Listening (live, ElevenLabs Scribe realtime)… click Stop when done.";
+}
+
+async function stopLive() {
+  const st = live; live = null;
+  micUi(false);
+  st.proc.disconnect(); st.src.disconnect(); st.stream.getTracks().forEach((t) => t.stop()); st.ctx.close();
+  if (st.ws.readyState === WebSocket.OPEN) {
+    const done = new Promise((ok) => { st.finalWaiter = ok; setTimeout(ok, 1500); });
+    st.ws.send(JSON.stringify({ message_type: "input_audio_chunk", audio_base_64: "", commit: true, sample_rate: 16000 }));
+    await done;
+    st.ws.close();
+  }
+  const text = [...st.committed, st.partial].filter(Boolean).join(" ").trim();
+  $("#llm-text").value = text;
+  if (!text) { $("#voice-status").textContent = "Didn't catch that, please try again."; return; }
+  lastSpoken = { text, language: null };
+  $("#voice-status").textContent = `Heard: “${text}”`;
+  runAgent({ text, buyer_id: $("#llm-buyer").value });
+}
+
+$("#mic").onclick = async () => {
+  if (live) return stopLive();
+  if (recorder && recorder.state === "recording") return recorder.stop();
+  try { await startLive(); }
+  catch (e) {
+    console.warn("live transcription unavailable, falling back:", e);
+    $("#voice-status").textContent = `Live transcription unavailable (${e.message}); recording instead…`;
+    startBatchRecording();
+  }
+};
 
 (async () => { await loadBuyers(); await loadTop(); await refresh(); setInterval(() => loadApprovals().catch(() => {}), 5000); })();

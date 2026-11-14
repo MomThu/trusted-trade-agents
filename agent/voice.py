@@ -43,6 +43,15 @@ async def speech_to_text(audio: bytes, filename: str = "speech.webm", content_ty
     return {"text": (data.get("text") or "").strip(), "language": data.get("language_code")}
 
 
+async def realtime_token() -> str:
+    """Single-use token (15 min) so the BROWSER can stream to Scribe realtime without our API key."""
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.post(f"{API}/single-use-token/realtime_scribe", headers={"xi-api-key": _key()})
+    if r.status_code != 200:
+        raise VoiceError(f"ElevenLabs realtime token {r.status_code}: {r.text[:300]}")
+    return r.json()["token"]
+
+
 def spoken_version(text: str, max_chars: int = 600) -> str:
     """Make a written agent report pleasant to hear: no markdown, no long codes, short."""
     t = re.sub(r"`([^`]*)`", r"\1", text)

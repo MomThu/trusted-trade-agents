@@ -148,13 +148,16 @@ Chef hears <── ElevenLabs text-to-speech <── agent's short answer ("wait
 
 1. Add `ELEVENLABS_API_KEY` to `.env` and restart. The top bar shows `ElevenLabs ✓`.
 2. **Agent console → Free text:** pick the buyer, click **🎙 Speak**, say the request, click **■ Stop**.
-   The words are transcribed (any language: Finnish works, e.g. *"Tarvitsen 60 litraa laktoositonta maitoa
-   maanantaiksi"*), shown in the box, and the agent runs.
+   The text box fills in **live while you speak** (ElevenLabs Scribe realtime over WebSocket; any language, Finnish
+   works, e.g. *"Tarvitsen 60 litraa laktoositonta maitoa maanantaiksi"*). On Stop the agent runs with that text.
+   The browser gets a 15-minute single-use token from our server, so the API key never leaves the server. If live
+   streaming is unavailable, it falls back to record-then-transcribe (Scribe v2).
 3. With **Read answers aloud** on, the agent's final answer is spoken (order codes and markdown are dropped,
    prices read as euros). Every agent message also has a **▶ Listen** button.
 
 The buyer's exact words, spoken or typed, are kept verbatim in `need.text`, so the approver sees what was actually
-said. Settings: `ELEVENLABS_VOICE_ID`, `ELEVENLABS_TTS_MODEL`, `ELEVENLABS_STT_MODEL` (see `.env.example`).
+said. Settings: `ELEVENLABS_VOICE_ID`, `ELEVENLABS_TTS_MODEL`, `ELEVENLABS_STT_MODEL`, `ELEVENLABS_REALTIME_MODEL`
+(see `.env.example`). The API key needs the speech-to-text and text-to-speech permissions.
 The key stays on the server; the browser only talks to `/api/ui/agent/voice/*`.
 
 ## Demo overlay (top bar)
