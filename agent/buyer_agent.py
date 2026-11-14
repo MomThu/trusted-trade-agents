@@ -171,6 +171,7 @@ Rules:
   dates ('by Monday') to an ISO date. Use unit L for liquids by volume, KG for weight, SALES_UNIT for counts.
 - Call find_offers, then place_order with the SAME need. Prefer the suggested_plan unless the buyer asked for
   something it ignores. If place_order returns errors, fix exactly what they say and retry (max 3 attempts).
+- Answer in the language the buyer used (e.g. Finnish if they spoke Finnish); keep `text` verbatim in their language.
 - Report honestly in 2-4 sentences: what was ordered or proposed, the total, and whether it is placed or
   waiting for human approval (and why). Never say an order is placed if it is pending approval.
 - If the buyer's words contain something the schema cannot express or you cannot verify ("the one the chef liked",

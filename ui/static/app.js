@@ -183,7 +183,7 @@ async function loadMandates() {
 
 function renderEvents(events) {
   $("#transcript").innerHTML = events.map((e) => {
-    if (e.kind === "say") return `<li class="${e.who === "buyer" ? "buyer" : "agent"}"><span class="who">${e.who === "buyer" ? "Buyer (person)" : "Buyer agent"}</span>${esc(e.text)}</li>`;
+    if (e.kind === "say") return `<li class="${e.who === "buyer" ? "buyer" : "agent"}"><span class="who">${e.who === "buyer" ? "Buyer (person)" + (lastSpoken && e.text === lastSpoken.text ? ` · spoken${lastSpoken.language ? ", " + esc(lastSpoken.language) : ""}` : "") : "Buyer agent"}${e.who !== "buyer" && voiceOn ? `<button class="play" data-say="${esc(e.text)}">▶ Listen</button>` : ""}</span>${esc(e.text)}</li>`;
     if (e.kind === "tool_call") return `<li class="tool_call"><span class="who">Agent → Valio MCP</span>${esc(e.tool)}(${esc(JSON.stringify(e.args).slice(0, 700))}${JSON.stringify(e.args).length > 700 ? "…" : ""})</li>`;
     if (e.kind === "tool_result") return `<li class="tool_result ${/^(ERROR|REQUEST CHECK FAILED)/.test(e.brief) ? "err" : ""}"><span class="who">Valio → agent</span>${esc(e.brief)}</li>`;
     return `<li class="error"><span class="who">${esc(e.kind)}</span>${esc(e.text || JSON.stringify(e))}</li>`;
@@ -197,6 +197,9 @@ async function runAgent(body, btn) {
   try {
     const r = await api("/api/ui/agent/run", { method: "POST", body: JSON.stringify(body) });
     renderEvents(r.events);
+    $("#transcript").querySelectorAll("button.play").forEach((b) => b.onclick = () => speak(b.dataset.say));
+    const finalSay = [...r.events].reverse().find((e) => e.kind === "say" && e.who !== "buyer");
+    if (body.text && voiceOn && $("#speak-replies").checked && finalSay) speak(finalSay.text);
     $("#run-status").textContent = `· ${r.mode} agent · outcome: ${r.outcome || "none"}${r.order_id ? " · " + r.order_id : ""}`;
     if (!r.order_id) $("#transcript").insertAdjacentHTML("afterbegin", `<li class="error"><span class="who">No order was created</span>The agent stopped without ordering. Read its last message: it may be waiting for the buyer's answer. Nothing appears in Approvals.</li>`);
     else if (r.outcome === "pending_approval") $("#transcript").insertAdjacentHTML("afterbegin", `<li class="tool_result"><span class="who">Waiting for a human</span>Order ${esc(r.order_id)} is in the Approvals tab.</li>`);
@@ -217,7 +220,11 @@ async function loadBuyers() {
 
 async function loadTop() {
   const [h, sc, presets] = await Promise.all([fetch("/health").then((r) => r.json()), api("/api/ui/scenario"), api("/api/ui/presets")]);
-  $("#health").textContent = `Valio API ${h.valio_api_key ? "✓" : "✗ (no key)"} · Gemini ${h.gemini ? "✓" : "✗"}`;
+  $("#health").textContent = `Valio API ${h.valio_api_key ? "✓" : "✗ (no key)"} · Gemini ${h.gemini ? "✓" : "✗"} · ElevenLabs ${h.elevenlabs ? "✓" : "✗"}`;
+  voiceOn = !!h.elevenlabs;
+  $("#mic").disabled = !(h.elevenlabs && h.gemini);
+  $("#speak-replies").disabled = !h.elevenlabs;
+  $("#mic").title = h.elevenlabs ? "Speak to the buyer agent (ElevenLabs speech-to-text)" : "Add ELEVENLABS_API_KEY to .env and restart";
   $("#llm-note").textContent = h.gemini ? "" : "GEMINI_API_KEY is not set in .env: use the scripted runs, or add a key and restart.";
   $("#llm-run").disabled = !h.gemini;
   const s = $("#scenario");
@@ -243,6 +250,54 @@ $("#orders-buyer").onchange = $("#orders-status").onchange = loadOrders;
 $("#audit-buyer").onchange = loadAudit;
 $("#scenario").onchange = async (e) => { await api("/api/ui/scenario", { method: "POST", body: JSON.stringify({ name: e.target.value || null }) }); toast(e.target.value ? `Overlay '${e.target.value}' on` : "Overlay off: live data only"); };
 $("#reset").onclick = async () => { if (!confirm("Delete all demo orders and audit entries?")) return; await api("/api/ui/reset", { method: "POST" }); toast("Demo reset"); loadTop(); refresh(); };
-$("#llm-run").onclick = () => runAgent({ text: $("#llm-text").value, buyer_id: $("#llm-buyer").value });
+$("#llm-run").onclick = () => { lastSpoken = null; runAgent({ text: $("#llm-text").value, buyer_id: $("#llm-buyer").value }); };
+
+// ---------------------------------------------------------------- voice (buyer agent side, ElevenLabs)
+// The chef talks to THEIR agent; the agent still talks to Valio only in JSON over MCP.
+let voiceOn = false, lastSpoken = null, recorder = null, chunks = [], player = null;
+
+async function speak(text) {
+  try {
+    $("#voice-status").textContent = "🔊 Generating speech…";
+    const r = await fetch("/api/ui/agent/voice/tts", { method: "POST", headers: STAFF, body: JSON.stringify({ text }) });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+    if (player) player.pause();
+    player = new Audio(URL.createObjectURL(await r.blob()));
+    player.onended = () => { $("#voice-status").textContent = ""; };
+    await player.play();
+    $("#voice-status").textContent = "🔊 Speaking… (ElevenLabs text-to-speech)";
+  } catch (e) { $("#voice-status").textContent = "Speech failed: " + e.message; }
+}
+
+async function startRecording() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    recorder = new MediaRecorder(stream);
+    chunks = [];
+    recorder.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+    recorder.onstop = async () => {
+      stream.getTracks().forEach((t) => t.stop());
+      $("#mic").classList.remove("recording"); $("#mic").textContent = "🎙 Speak";
+      const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+      $("#voice-status").textContent = "📝 Transcribing… (ElevenLabs speech-to-text)";
+      const form = new FormData();
+      form.append("audio", blob, "speech." + ((recorder.mimeType || "audio/webm").includes("mp4") ? "mp4" : "webm"));
+      try {
+        const r = await fetch("/api/ui/agent/voice/stt", { method: "POST", headers: { "X-Staff-Key": STAFF["X-Staff-Key"] }, body: form });
+        const out = await r.json();
+        if (!r.ok) throw new Error(out.detail || r.statusText);
+        if (!out.text) { $("#voice-status").textContent = "Didn't catch that, please try again."; return; }
+        $("#llm-text").value = out.text;
+        lastSpoken = out;
+        $("#voice-status").textContent = `Heard${out.language ? " (" + out.language + ")" : ""}: “${out.text}”`;
+        runAgent({ text: out.text, buyer_id: $("#llm-buyer").value });
+      } catch (e) { $("#voice-status").textContent = "Transcription failed: " + e.message; }
+    };
+    recorder.start();
+    $("#mic").classList.add("recording"); $("#mic").textContent = "■ Stop";
+    $("#voice-status").textContent = "🎙 Listening… click Stop when done.";
+  } catch (e) { $("#voice-status").textContent = "Microphone not available: " + e.message; }
+}
+$("#mic").onclick = () => (recorder && recorder.state === "recording" ? recorder.stop() : startRecording());
 
 (async () => { await loadBuyers(); await loadTop(); await refresh(); setInterval(() => loadApprovals().catch(() => {}), 5000); })();

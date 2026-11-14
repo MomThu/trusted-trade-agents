@@ -14,12 +14,12 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
+from fastapi.responses import RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from agent import buyer_agent
+from agent import buyer_agent, voice
 from data.vocab import ALLERGENS
 from order_service import config, db, orders, valio_client
 from order_service.models import Need, OrderLine
@@ -279,6 +279,35 @@ async def ui_agent_run(body: AgentRun, request: Request, _: str = Depends(staff)
     return {"mode": locals().get("mode"), "outcome": result.get("outcome"), "order_id": order.get("order_id"), "events": events}
 
 
+# ------------------------------------------------------------------ buyer agent voice (ElevenLabs)
+# Voice belongs to the BUYER's agent: the chef talks to their agent, the agent still talks to Valio in JSON.
+
+@app.post("/api/ui/agent/voice/stt", tags=["demo"])
+async def ui_voice_stt(audio: UploadFile = File(...), _: str = Depends(staff)):
+    data = await audio.read()
+    if not data:
+        raise HTTPException(400, "empty recording")
+    try:
+        return await voice.speech_to_text(data, audio.filename or "speech.webm", audio.content_type or "audio/webm")
+    except voice.VoiceError as e:
+        raise HTTPException(502, str(e))
+
+
+class SpeakBody(BaseModel):
+    text: str
+
+
+@app.post("/api/ui/agent/voice/tts", tags=["demo"])
+async def ui_voice_tts(body: SpeakBody, _: str = Depends(staff)):
+    if not body.text.strip():
+        raise HTTPException(400, "no text")
+    try:
+        audio = await voice.text_to_speech(body.text)
+    except voice.VoiceError as e:
+        raise HTTPException(502, str(e))
+    return Response(audio, media_type="audio/mpeg")
+
+
 # ------------------------------------------------------------------ UI + MCP mount
 
 @app.get("/", include_in_schema=False)
@@ -289,6 +318,7 @@ def root():
 @app.get("/health", include_in_schema=False)
 def health():
     return {"ok": True, "valio_api_key": bool(config.VALIO_API_KEY), "gemini": bool(config.GEMINI_API_KEY),
+            "elevenlabs": voice.enabled(),
             "scenario": valio_client.active_scenario()}
 
 

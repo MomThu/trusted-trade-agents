@@ -6,6 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 os.environ.setdefault("OFFER_SIGNING_SECRET", "test-secret")
+os.environ["AI_CROSSCHECK"] = "0"          # tests are offline and deterministic: no LLM calls
 os.environ["ORDERS_DB"] = os.path.join(tempfile.mkdtemp(), "orders.db")
 
 import pytest  # noqa: E402
@@ -51,6 +52,7 @@ def _env(monkeypatch):
     STUB.clear()
     monkeypatch.setattr(offers, "price_and_availability", fake_pa)
     monkeypatch.setattr(checks, "price_and_availability", fake_pa)
+    monkeypatch.setattr(config, "AI_CROSSCHECK", False)
     db.reset()
     yield
 
