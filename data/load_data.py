@@ -1,6 +1,7 @@
 """Load Valio's product JSON + delivery reliability CSV + carbon CSV into SQLite.
 
-    python -m data.load_data              # build data/valio.db
+    python -m data.load_data --download   # fetch the 3 files from Valio's API (needs VALIO_API_KEY), then build
+    python -m data.load_data              # build data/valio.db from data/raw/
     python -m data.load_data --sample 3   # print 3 parsed products, no DB write
 
 Joined by product code. Everything the search and request check need is
@@ -212,12 +213,55 @@ def build(db_path: Path = DB_PATH) -> dict:
     return stats
 
 
+# Valio's download endpoints (they redirect to the current file). The API key comes from .env.
+DOWNLOADS = {
+    "products": PRODUCTS,
+    "delivery-reliability": RELIABILITY,
+    "carbon-footprint": CARBON,
+}
+
+
+def download(dest_dir: Path = RAW) -> list[Path]:
+    """Fetch the product, reliability and carbon files from Valio's API into dest_dir."""
+    import os
+
+    import httpx
+    from dotenv import load_dotenv
+    load_dotenv(ROOT.parent / ".env")
+    base = os.getenv("VALIO_API_BASE", "https://junction26.valioaimo.fi/api").rstrip("/")
+    key = os.getenv("VALIO_API_KEY")
+    if not key:
+        sys.exit("VALIO_API_KEY is not set in .env: it is needed to download Valio's data files")
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    saved = []
+    with httpx.Client(timeout=300, follow_redirects=True, headers={"X-API-Key": key}) as client:
+        for name, target in DOWNLOADS.items():
+            out = dest_dir / target.name
+            tmp = out.with_suffix(out.suffix + ".part")
+            with client.stream("GET", f"{base}/{name}/download") as r:
+                if r.status_code != 200:
+                    sys.exit(f"Download of {name} failed: HTTP {r.status_code}")
+                with open(tmp, "wb") as f:
+                    for chunk in r.iter_bytes(1 << 20):
+                        f.write(chunk)
+            tmp.replace(out)                              # never leave a half-written file behind
+            print(f"  downloaded {name:<22} -> {out.relative_to(ROOT.parent) if out.is_relative_to(ROOT.parent) else out} "
+                  f"({out.stat().st_size / 1e6:.1f} MB)")
+            saved.append(out)
+    return saved
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--sample", type=int, default=0, help="print N parsed products and exit")
+    ap.add_argument("--download", action="store_true", help="fetch the data files from Valio's API first")
     args = ap.parse_args()
-    if not PRODUCTS.exists():
-        sys.exit(f"Missing {PRODUCTS}. Download the data files from the Valio resource portal into data/raw/.")
+    if args.download:
+        print("Downloading Valio data files…")
+        download()
+    missing = [p.name for p in (PRODUCTS, RELIABILITY, CARBON) if not p.exists()]
+    if missing:
+        sys.exit(f"Missing {missing} in data/raw/. Run `python -m data.load_data --download` (needs VALIO_API_KEY).")
     if args.sample:
         rel = read_csv_map(RELIABILITY, "deliveryReliability")
         carbon = read_csv_map(CARBON, "AVG kg CO2-eq/kg")

@@ -21,7 +21,7 @@ RISK_FLAGS = {
 
 
 def evaluate(total_eur: float, lines: list[dict], flags: list[str], reject_reasons: list[str], mandate: dict,
-             unresolved: str | None = None) -> tuple[str, list[dict]]:
+             unresolved: str | None = None, agent_spent_24h: float = 0.0) -> tuple[str, list[dict]]:
     """Return (outcome, reasons). outcome: rejected | pending_approval | placed."""
     if reject_reasons:
         return "rejected", [{"code": "not_orderable", "message": r} for r in reject_reasons]
@@ -32,6 +32,12 @@ def evaluate(total_eur: float, lines: list[dict], flags: list[str], reject_reaso
     limit = mandate.get("spend_limit_eur")
     if limit is not None and total_eur > limit:
         reasons.append({"code": "over_spend_limit", "message": f"Order total EUR {total_eur:,.2f} exceeds the agent's limit of EUR {limit:,.2f}"})
+    elif limit is not None and agent_spent_24h + total_eur > limit:
+        # Splitting must not slip under the limit: the limit caps what the agent places ON ITS OWN in 24 h.
+        # Orders a human approved do not use up the agent's budget.
+        reasons.append({"code": "over_spend_limit_24h", "message":
+                        f"Together with EUR {agent_spent_24h:,.2f} the agent already placed on its own in the last 24 h, "
+                        f"the total EUR {agent_spent_24h + total_eur:,.2f} exceeds the agent's limit of EUR {limit:,.2f}"})
     subs = [l for l in lines if l.get("is_substitution")]
     if subs and mandate.get("substitutions_need_approval", True):
         reasons.append({"code": "substitution", "message": "Contains substitution(s): " + ", ".join(l["name"] for l in subs)})

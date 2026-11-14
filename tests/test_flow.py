@@ -7,7 +7,9 @@ from data import catalog
 from order_service import signing
 from order_service.models import Need, OrderLine
 from order_service.offers import find_offers
-from order_service.orders import approve, cancel, get_order, place_order
+from order_service import db
+from order_service.checks import _history_avg
+from order_service.orders import TransitionError, approve, cancel, get_order, place_order
 from order_service.policy import evaluate
 from tests.conftest import stub
 
@@ -50,7 +52,7 @@ def test_partial_stock_plan_uses_official_substitute(hotel):
     assert res["status"] == "pending_approval"
     codes = {x["code"] for x in res["reasons"]}
     assert codes == {"over_spend_limit", "substitution"}
-    o = approve(res["order_id"], "tester")
+    o = run(approve(res["order_id"], "tester"))
     assert o["status"] == "approved"
 
 
@@ -111,6 +113,9 @@ def test_school_allergen_policy_applies_even_if_agent_omits_it(school):
     assert res["status"] == "pending_approval"
     msg = next(x["message"] for x in res["reasons"] if x["code"] == "allergen_data_missing")
     assert "nuts (customer allergen policy)" in msg
+    # fix 3: the summary must never claim safety the data does not prove
+    assert "free of nuts" not in res["agent_understood"]
+    assert "must exclude nuts, peanuts, sesame but allergen data is missing" in res["agent_understood"]
 
 
 def test_school_policy_blocks_product_containing_listed_allergen(school, hotel):
@@ -184,3 +189,75 @@ def test_agent_declared_doubt_always_goes_to_a_human(hotel):
     res = run(place_order(hotel, lines_of(run(find_offers(hotel, need))["suggested_plan"]), need))
     assert res["status"] == "pending_approval"
     assert res["reasons"][0] == {"code": "agent_unresolved", "message": "Agent could not resolve: which milk the chef liked is unknown"}
+
+
+
+# ---------------------------------------------------------------- fix 1: approval re-checks before placing
+
+def _pending_big_milk_order(hotel, qty=2000):
+    stub("464306", 1.01)
+    need = Need(**{**MILK, "quantity": qty})
+    res = run(place_order(hotel, lines_of(run(find_offers(hotel, need))["suggested_plan"]), need))
+    assert res["status"] == "pending_approval"            # over the EUR 1,000 limit
+    return res["order_id"]
+
+
+def test_approve_refused_after_order_cutoff(hotel):
+    oid = _pending_big_milk_order(hotel)
+    o = get_order(oid)
+    for l in o["lines"]:
+        l["closing_time"] = "2020-01-01T17:00:00+02:00"
+    db.execute("UPDATE orders SET lines=? WHERE order_id=?", (__import__("json").dumps(o["lines"]), oid))
+    with pytest.raises(TransitionError, match="Too late"):
+        run(approve(oid, "tester"))
+    assert get_order(oid)["status"] == "pending_approval"
+
+
+def test_approve_shows_price_rise_then_allows_informed_approval(hotel):
+    oid = _pending_big_milk_order(hotel)
+    stub("464306", 1.20)                                 # price rose while the order waited
+    with pytest.raises(TransitionError, match="Price rose"):
+        run(approve(oid, "tester"))
+    o = get_order(oid)
+    assert o["status"] == "pending_approval" and o["total_eur"] == 2400.0 and "price_changed" in o["flags"]
+    assert run(approve(oid, "tester"))["status"] == "approved"   # second, informed approval
+
+
+def test_approve_refused_when_stock_dropped(hotel):
+    oid = _pending_big_milk_order(hotel)
+    stub("464306", 1.01, amount=500)
+    with pytest.raises(TransitionError, match="only 500"):
+        run(approve(oid, "tester"))
+
+
+def test_approve_uses_lower_price(hotel):
+    oid = _pending_big_milk_order(hotel)
+    stub("464306", 0.95)
+    o = run(approve(oid, "tester"))
+    assert o["status"] == "approved" and o["total_eur"] == 1900.0
+
+
+# ---------------------------------------------------------------- fix 2: splitting does not slip under the limit
+
+def test_split_orders_cannot_slip_under_spend_limit(hotel):
+    stub("464306", 1.01)
+    need = Need(**{**MILK, "quantity": 890})              # EUR 898.90 each, limit EUR 1,000
+    first = run(place_order(hotel, lines_of(run(find_offers(hotel, need))["suggested_plan"]), need))
+    assert first["status"] == "placed"
+    second = run(place_order(hotel, lines_of(run(find_offers(hotel, need))["suggested_plan"]), need))
+    assert second["status"] == "pending_approval"
+    assert [r["code"] for r in second["reasons"]] == ["over_spend_limit_24h"]
+
+
+def test_human_approved_orders_do_not_use_up_agent_budget(hotel):
+    oid = _pending_big_milk_order(hotel)                  # EUR 2,020, approved by a human
+    run(approve(oid, "tester"))
+    need = Need(**{**MILK, "quantity": 60, "text": "weekly 60 L"})
+    assert run(place_order(hotel, lines_of(run(find_offers(hotel, need))["suggested_plan"]), need))["status"] == "placed"
+
+
+# ---------------------------------------------------------------- fix 4: only placed orders are history
+
+def test_pending_orders_do_not_count_as_history(hotel):
+    _pending_big_milk_order(hotel)
+    assert _history_avg("hotel-aurora", "464306") == (0.0, 0)

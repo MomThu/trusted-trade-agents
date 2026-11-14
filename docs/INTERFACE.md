@@ -100,7 +100,9 @@ new requirement properly means extending the schema, not teaching the server to 
 | Quantity vs. this buyer's history | flag `unusual_quantity` (> factor × average of ≥ 2 orders) |
 | Substitution | from the **signed** role or Valio's substitution list, not from the agent's claim |
 
-It writes the plain-language **"agent understood"** summary shown next to the buyer's words.
+It writes the plain-language **"agent understood"** summary shown next to the buyer's words. The summary
+only says "verified free of …" when manufacturer data proves it; otherwise it says "must exclude … but allergen
+data is missing". Only placed and approved orders count as order history.
 
 ### Gate 2, policy: is the agent allowed? (whole order, so splitting cannot dodge the limit)
 | Outcome | When |
@@ -108,6 +110,15 @@ It writes the plain-language **"agent understood"** summary shown next to the bu
 | `rejected` | sales block, not deliverable, no price at re-check |
 | `pending_approval` | agent declared a doubt (`unresolved`); over spend limit; any substitution (if mandate says so); missing allergen data for an excluded allergen; any risk flag |
 | `placed` | within mandate, no flags; cancellable until the earliest `closingTime` of its lines |
+
+**Spend limit.** `spend_limit_eur` caps a single order *and* what the agent places on its own within 24 hours, so
+splitting a purchase into smaller orders does not slip under the limit (`over_spend_limit_24h`). Orders a human
+approved do not use up the agent's budget.
+
+**Approval re-checks before placing.** Approved means placed, so on approval Valio re-checks what may have changed
+while the order waited: the order cut-off (after `closingTime` the order is refused: reject it and re-order for a
+later date), live stock (refused if too low) and live price (a lower price is used; a higher price is written onto
+the order, which stays pending until the approver confirms it again).
 
 Mandate (per buyer, configuration in `order_service/buyers.json`, editable in the UI and logged):
 `spend_limit_eur, allergen_policy, substitutions_need_approval, min_delivery_reliability,

@@ -41,6 +41,14 @@ function saidUnderstood(o) {
   </div>`;
 }
 
+// Earliest order cut-off among the lines: after it, the delivery date can no longer be met.
+function deadline(o) {
+  const c = (o.lines || []).map((l) => l.closing_time).filter(Boolean).sort()[0];
+  if (!c) return "";
+  const passed = new Date(c) <= new Date();
+  return `<div class="${passed ? "deadline passed" : "deadline"}">${passed ? "Order cut-off passed" : "Approve before"} ${when(c)}</div>`;
+}
+
 // Flags that belong to the whole order (not shown on any line): agent doubt, AI cross-check, partial, ...
 function orderChips(o) {
   const onLines = new Set((o.lines || []).flatMap((l) => l.flags || []));
@@ -74,7 +82,8 @@ async function loadApprovals() {
   if (!list.length) { el.innerHTML = `<div class="empty">No orders waiting for approval.</div>`; return; }
   el.innerHTML = list.map((o) => `<article class="card" data-id="${o.order_id}">
     <div class="approval-head">
-      <div><strong>${esc(buyerName(o.buyer_id))}</strong> <span class="muted">· ${esc(o.order_id)} · ${when(o.created_at)}</span></div>
+      <div><strong>${esc(buyerName(o.buyer_id))}</strong> <span class="muted">· ${esc(o.order_id)} · ${when(o.created_at)}</span>
+        ${deadline(o)}</div>
       <div class="total">${eur(o.total_eur)} <span class="muted" style="font-size:12px;font-weight:400">excl. VAT</span></div>
     </div>
     ${orderChips(o)}
@@ -95,8 +104,14 @@ async function loadApprovals() {
     const note = () => $(".note", card).value || null;
     $(".approve", card).onclick = async () => {
       const remove = [...card.querySelectorAll("input[data-line]")].filter((c) => !c.checked).map((c) => +c.dataset.line);
+      const btn = $(".approve", card); btn.disabled = true; btn.textContent = "Re-checking price, stock, cut-off…";
       try { await api(`/api/ui/orders/${id}/approve`, { method: "POST", body: JSON.stringify({ note: note(), remove_lines: remove.length ? remove : null }) }); toast("Approved and placed"); refresh(); }
-      catch (e) { toast(e.message); }
+      catch (e) {
+        await refresh();                                   // shows an updated price, if that was the reason
+        const again = document.querySelector(`article[data-id="${id}"]`);
+        if (again) again.insertAdjacentHTML("afterbegin", `<div class="blocked"><b>Not placed.</b> ${esc(e.message)}</div>`);
+        else toast(e.message);
+      }
     };
     $(".reject", card).onclick = async () => {
       try { await api(`/api/ui/orders/${id}/reject`, { method: "POST", body: JSON.stringify({ note: note() }) }); toast("Rejected"); refresh(); }
@@ -218,9 +233,17 @@ async function loadBuyers() {
   loadMandates();
 }
 
+function showHealth(h) {
+  const v = h.valio_api || {};
+  const valio = !h.valio_api_key ? "✗ (no key)" : v.online ? `✓ online${v.ms != null ? " " + v.ms + " ms" : ""}` : `✗ not responding (${v.detail || "?"})`;
+  $("#health").textContent = `Valio API ${valio} · Gemini ${h.gemini ? "✓" : "✗"} · ElevenLabs ${h.elevenlabs ? "✓" : "✗"}`;
+  $("#health").classList.toggle("down", !!h.valio_api_key && !v.online);
+}
+async function refreshHealth() { showHealth(await fetch("/health").then((r) => r.json())); }
+
 async function loadTop() {
   const [h, sc, presets] = await Promise.all([fetch("/health").then((r) => r.json()), api("/api/ui/scenario"), api("/api/ui/presets")]);
-  $("#health").textContent = `Valio API ${h.valio_api_key ? "✓" : "✗ (no key)"} · Gemini ${h.gemini ? "✓" : "✗"} · ElevenLabs ${h.elevenlabs ? "✓" : "✗"}`;
+  showHealth(h);
   voiceOn = !!h.elevenlabs;
   $("#mic").disabled = !(h.elevenlabs && h.gemini);
   $("#speak-replies").disabled = !h.elevenlabs;
@@ -391,4 +414,4 @@ $("#mic").onclick = async () => {
   }
 };
 
-(async () => { await loadBuyers(); await loadTop(); await refresh(); setInterval(() => loadApprovals().catch(() => {}), 5000); })();
+(async () => { await loadBuyers(); await loadTop(); await refresh(); setInterval(() => loadApprovals().catch(() => {}), 5000); setInterval(() => refreshHealth().catch(() => {}), 60000); })();

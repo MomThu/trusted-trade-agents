@@ -19,10 +19,7 @@ Buyer (person) ── plain words ──> Buyer agent (any vendor) ── JSON t
 
 ## Quick start
 
-1. Put the Valio data files in `data/raw/` (from the resource portal):
-   `valio_aimo_junction26_product_data.json`, `valio_aimo_junction26_delivery_reliability.csv`,
-   `valio_aimo_junction26_carbon_footprint.csv`.
-2. `cp .env.example .env` and fill in:
+1. `cp .env.example .env` and fill in:
 
    | Variable | Needed for | Notes |
    |---|---|---|
@@ -33,13 +30,19 @@ Buyer (person) ── plain words ──> Buyer agent (any vendor) ── JSON t
    | `AI_CROSSCHECK` | Valio-side AI cross-check | `1` = on (recommended for the demo), needs `GEMINI_API_KEY` |
    | `ELEVENLABS_API_KEY` | voice for the buyer agent | optional; speech-to-text in, text-to-speech out (see "Voice" below) |
 
-3. Run:
+2. Run:
 
 ```bash
-./run.sh            # venv + deps + loads data/valio.db + starts http://localhost:8000
+./run.sh            # venv + deps + downloads Valio's data files (first run) + builds data/valio.db + starts http://localhost:8000
 ```
 
-Open http://localhost:8000. The top bar shows `Valio API ✓ · Gemini ✓` when the keys are loaded.
+On the first run `run.sh` downloads the product, delivery-reliability and carbon files from Valio's API
+(`/api/products/download`, `/api/delivery-reliability/download`, `/api/carbon-footprint/download`) with
+`VALIO_API_KEY` into `data/raw/` (git-ignored), so no data is copied by hand or committed. To refresh them:
+`.venv/bin/python -m data.load_data --download`.
+
+Open http://localhost:8000. The top bar shows `Valio API ✓ online 130 ms · Gemini ✓ · ElevenLabs ✓`. The Valio
+status comes from `/api/ping` and is refreshed every minute, so a slow or down mock API is visible during a demo.
 After changing `.env`, restart the server (`Ctrl+C`, then `./run.sh`).
 
 | URL | Who | What |
@@ -181,7 +184,7 @@ products with no delivery dates, out-of-stock fresh salmon, limited stock (Arla 
 | Top bar shows `Gemini ✗` | Add `GEMINI_API_KEY` to `.env` and restart |
 | Free-text run fails with "model … not available" | Set `GEMINI_MODEL` to a model your key lists (e.g. `gemini-4-hydrogen`) |
 | Badges or layout look old | Hard-reload (`Cmd+Shift+R`) |
-| Every offer says "Valio live data unavailable" | Check `VALIO_API_KEY` and network; nothing is offered without live price and stock |
+| Top bar shows `Valio API ✗ not responding`, or offers say "Valio live data unavailable" | Valio's mock API is down or unreachable (check network and `VALIO_API_KEY`); nothing is offered without live price and stock |
 | An offer "expired" | Offers live 15 minutes; the agent calls `find_offers` again |
 | Agent console shows "No order was created" | The agent stopped to ask the buyer; read its last message |
 

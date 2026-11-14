@@ -11,13 +11,13 @@ from __future__ import annotations
 
 import json
 import secrets
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from order_service import config, db
 from order_service.checks import request_check, summarise
 from order_service.models import Need, OrderLine
 from order_service.policy import evaluate
-from order_service.valio_client import now, parse_ts
+from order_service.valio_client import ValioAPIError, now, parse_ts, price_and_availability
 
 
 def _order_public(o: dict) -> dict:
@@ -27,6 +27,13 @@ def _order_public(o: dict) -> dict:
     cu = parse_ts(o.get("cancel_until"))
     o["cancellable"] = o["status"] in ("placed", "approved", "pending_approval") and (o["status"] == "pending_approval" or bool(cu and cu > now()))
     return o
+
+
+def agent_spent_24h(buyer_id: str) -> float:
+    """What the agent placed autonomously (no human decision) in the last 24 h, not cancelled."""
+    since = (now() - timedelta(hours=24)).isoformat(timespec="seconds")
+    rows = db.query("SELECT total_eur, created_at FROM orders WHERE buyer_id=? AND status='placed' AND decided_by IS NULL", (buyer_id,))
+    return round(sum(r["total_eur"] or 0 for r in rows if (parse_ts(r["created_at"]) or now()) >= parse_ts(since)), 2)
 
 
 async def place_order(buyer: dict, lines: list[OrderLine], need: Need) -> dict:
@@ -57,7 +64,8 @@ async def place_order(buyer: dict, lines: list[OrderLine], need: Need) -> dict:
             res.flag("possible_misunderstanding")
             res.notes.append(f"AI cross-check: {verdict}")
 
-    outcome, reasons = evaluate(total, res.lines, res.flags, res.reject_reasons, buyer["mandate"], res.need.unresolved)
+    outcome, reasons = evaluate(total, res.lines, res.flags, res.reject_reasons, buyer["mandate"], res.need.unresolved,
+                                agent_spent_24h(buyer["buyer_id"]))
     closings = [parse_ts(l["closing_time"]) for l in res.lines if l.get("closing_time")]
     open_closings = [c for c in closings if c and c > now()]
     cancel_until = min(open_closings).isoformat() if open_closings and len(open_closings) == len(closings) else None
@@ -131,7 +139,10 @@ class TransitionError(ValueError):
     pass
 
 
-def approve(order_id: str, approver: str, remove_lines: list[int] | None = None, note: str | None = None) -> dict:
+async def approve(order_id: str, approver: str, remove_lines: list[int] | None = None, note: str | None = None) -> dict:
+    """Human sign-off. Approved = placed, so first re-check what may have changed while the order waited:
+    order cut-off, live stock and live price. If anything blocks it, the order stays pending and the
+    approver is told why (a higher price is written onto the order so it can be approved knowingly)."""
     o = get_order(order_id)
     if not o:
         raise TransitionError("order not found")
@@ -144,15 +155,70 @@ def approve(order_id: str, approver: str, remove_lines: list[int] | None = None,
         lines = [l for l in lines if l["line"] not in remove_lines]
         if not lines:
             raise TransitionError("cannot remove every line; reject the order instead")
+
+    # 1. order cut-off: after closingTime the delivery date can no longer be met
+    late = [l for l in lines if l.get("closing_time") and parse_ts(l["closing_time"]) and parse_ts(l["closing_time"]) <= now()]
+    if late:
+        raise TransitionError("Too late to place: the order cut-off passed for " + ", ".join(
+            f"{l['name']} ({parse_ts(l['closing_time']):%a %d.%m. %H:%M})" for l in late) +
+            ". Reject it and let the agent order again for a later delivery date.")
+
+    # 2. live stock and price, fresh
+    buyer = config.load_buyers().get(o["buyer_id"], {})
+    deliver_by = datetime.fromisoformat(o["need"]["deliver_by"]).date()
+    try:
+        live = await price_and_availability([l["product_code"] for l in lines], buyer.get("customer_number", o["buyer_id"]),
+                                            deliver_by, fresh=True)
+    except ValioAPIError as e:
+        raise TransitionError(f"Cannot re-check live price and stock right now ({e}); try again in a moment")
+    problems, rises, notes = [], [], []
+    for l in lines:
+        a, pr = live[l["product_code"]]["availability"], live[l["product_code"]]["price"]
+        if not pr.get("found") or not a.get("deliverable") or a.get("sales_block"):
+            problems.append(f"{l['name']} is no longer orderable ({a.get('reason') or 'no price or sales block'})")
+            continue
+        avail = a.get("available_units")
+        if a.get("stock_known") and avail is not None and l["quantity"] > avail + 1e-9:
+            problems.append(f"only {avail:g} {l['sales_unit']} of {l['name']} left (order has {l['quantity']:g})")
+        new = pr["unit_price_eur"]
+        if new > l["unit_price_eur"] + 1e-9:
+            rises.append((l, new))
+        elif new < l["unit_price_eur"] - 1e-9:
+            notes.append(f"{l['name']} price fell {l['unit_price_eur']:.2f} -> {new:.2f} EUR; using the new price")
+            l["unit_price_eur"], l["line_total_eur"] = new, round(l["quantity"] * new, 2)
+    if problems:
+        db.audit("approval_blocked", "Approval blocked: " + "; ".join(problems), buyer_id=o["buyer_id"],
+                 actor=f"human:{approver}", order_id=order_id)
+        raise TransitionError("Cannot place: " + "; ".join(problems) + ". Reject it, or let the agent re-plan.")
+    if rises:
+        for l, new in rises:          # write the new price onto the pending order so the approver sees it
+            l.setdefault("offered_unit_price_eur", l["unit_price_eur"])
+            l["unit_price_eur"], l["line_total_eur"] = new, round(l["quantity"] * new, 2)
+            if "price_changed" not in l["flags"]:
+                l["flags"].append("price_changed")
+        all_lines = [x for x in o["lines"] if x["line"] not in {r["line"] for r in lines}] + lines
+        all_lines.sort(key=lambda x: x["line"])
+        new_total = round(sum(x["line_total_eur"] for x in all_lines), 2)
+        flags = sorted(set(o["flags"] or []) | {"price_changed"})
+        db.execute("UPDATE orders SET lines=?, total_eur=?, flags=?, updated_at=? WHERE order_id=?",
+                   (json.dumps(all_lines, ensure_ascii=False), new_total, json.dumps(flags), db.now_iso(), order_id))
+        msg = "; ".join(f"{l['name']} {l['offered_unit_price_eur']:.2f} -> {new:.2f} EUR" for l, new in rises)
+        db.audit("approval_blocked", f"Price rose while the order waited: {msg}. Order updated, still pending.",
+                 buyer_id=o["buyer_id"], actor=f"human:{approver}", order_id=order_id)
+        raise TransitionError(f"Price rose while the order waited ({msg}). The order shows the new total "
+                              f"EUR {new_total:,.2f}; review and approve again if it is still OK.")
+
     total = round(sum(l["line_total_eur"] for l in lines), 2)
     closings = [parse_ts(l["closing_time"]) for l in lines if l.get("closing_time")]
     open_c = [c for c in closings if c and c > now()]
     cancel_until = min(open_c).isoformat() if open_c and len(open_c) == len(closings) else None
     db.execute("UPDATE orders SET status='approved', lines=?, total_eur=?, cancel_until=?, decided_by=?, decided_at=?, decision_note=?, updated_at=? WHERE order_id=?",
                (json.dumps(lines, ensure_ascii=False), total, cancel_until, approver, db.now_iso(), note, db.now_iso(), order_id))
-    msg = f"Approved by {approver} and placed (EUR {total:,.2f})"
+    msg = f"Approved by {approver} and placed (EUR {total:,.2f}); live price, stock and cut-off re-checked"
     if removed:
         msg += f"; removed line(s): {', '.join(l['name'] for l in removed)}"
+    if notes:
+        msg += "; " + "; ".join(notes)
     if note:
         msg += f". Note: {note}"
     db.audit("order_approved", msg, buyer_id=o["buyer_id"], actor=f"human:{approver}", order_id=order_id,

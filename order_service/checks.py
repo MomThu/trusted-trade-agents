@@ -42,7 +42,7 @@ def _qty_suggestions(q: float, step: float) -> list[float]:
 
 def _history_avg(buyer_id: str, code: str) -> tuple[float, int]:
     qs = []
-    for o in db.query("SELECT lines FROM orders WHERE buyer_id=? AND status IN ('placed','approved','pending_approval')", (buyer_id,)):
+    for o in db.query("SELECT lines FROM orders WHERE buyer_id=? AND status IN ('placed','approved')", (buyer_id,)):
         for l in o["lines"] or []:
             if l["product_code"] == code:
                 qs.append(l["quantity"])
@@ -224,6 +224,13 @@ def summarise(need: Need, lines: list[dict]) -> str:
     covered = sum(l["covers"] for l in lines)
     d = date.fromisoformat(min(l["available_date"] for l in lines if l.get("available_date"))) if any(l.get("available_date") for l in lines) else need.deliver_by
     labels = f" {', '.join(need.required_labels)}" if need.required_labels else ""
-    excl = f", free of {', '.join(need.exclude_allergens)}" if need.exclude_allergens else ""
+    excl = ""
+    if need.exclude_allergens:
+        unknown = sorted({f.split(":", 1)[1] for l in lines for f in l.get("flags", []) if f.startswith("allergen_unknown:")})
+        verified = [g for g in need.exclude_allergens if g not in unknown]
+        if verified:
+            excl += f", verified free of {', '.join(verified)}"
+        if unknown:   # never claim safety the data does not prove
+            excl += f", must exclude {', '.join(unknown)} but allergen data is missing"
     return (f"{' + '.join(parts)} = {fmt_qty(covered)} {UNIT_LABEL[need.unit]}{labels} {need.query}{excl}, "
             f"delivery {d.strftime('%a %d.%m.')}, EUR {total:,.2f} excl. VAT")

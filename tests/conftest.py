@@ -11,7 +11,7 @@ os.environ["ORDERS_DB"] = os.path.join(tempfile.mkdtemp(), "orders.db")
 
 import pytest  # noqa: E402
 
-from order_service import checks, config, db, offers  # noqa: E402
+from order_service import checks, config, db, offers, orders  # noqa: E402
 
 # code -> (unit_price, comparison_price, model, amount, closing, reliability-irrelevant)
 STUB: dict[str, dict] = {}
@@ -52,6 +52,7 @@ def _env(monkeypatch):
     STUB.clear()
     monkeypatch.setattr(offers, "price_and_availability", fake_pa)
     monkeypatch.setattr(checks, "price_and_availability", fake_pa)
+    monkeypatch.setattr(orders, "price_and_availability", fake_pa)
     monkeypatch.setattr(config, "AI_CROSSCHECK", False)
     db.reset()
     yield

@@ -175,6 +175,30 @@ def _normalise_price(code: str, raw: dict | None) -> dict:
     }
 
 
+_ping_cache: tuple[float, dict] | None = None
+
+
+async def ping() -> dict:
+    """Is Valio's API answering right now? Cached 30 s so the UI can poll it cheaply."""
+    global _ping_cache
+    if _ping_cache and time.time() - _ping_cache[0] < 30:
+        return _ping_cache[1]
+    if not config.VALIO_API_KEY:
+        out = {"online": False, "detail": "no VALIO_API_KEY"}
+    else:
+        t = time.time()
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                r = await client.get(f"{config.VALIO_API_BASE}/ping", headers={"X-API-Key": config.VALIO_API_KEY})
+            ok = r.status_code == 200 and (r.json() or {}).get("status") == "ok"
+            out = {"online": ok, "ms": round((time.time() - t) * 1000),
+                   "detail": "ok" if ok else f"HTTP {r.status_code}"}
+        except Exception as e:
+            out = {"online": False, "detail": type(e).__name__}
+    _ping_cache = (time.time(), out)
+    return out
+
+
 async def price_and_availability(codes: list[str], customer: str, deliver_by: date, fresh: bool = False) -> dict[str, dict]:
     """{code: {"price": {...}, "availability": {...}}} for up to a few dozen codes."""
     prices, avail = await asyncio.gather(

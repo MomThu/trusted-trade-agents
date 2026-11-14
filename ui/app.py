@@ -133,8 +133,11 @@ def ui_order(order_id: str, _: str = Depends(staff)):
 
 
 @app.post("/api/ui/orders/{order_id}/approve", tags=["human"])
-def ui_approve(order_id: str, d: Decision, _: str = Depends(staff)):
-    return _transition(orders.approve, order_id, d.approver, d.remove_lines, d.note)
+async def ui_approve(order_id: str, d: Decision, _: str = Depends(staff)):
+    try:
+        return await orders.approve(order_id, d.approver, d.remove_lines, d.note)
+    except orders.TransitionError as e:
+        raise HTTPException(409, str(e))
 
 
 @app.post("/api/ui/orders/{order_id}/reject", tags=["human"])
@@ -326,8 +329,9 @@ def root():
 
 
 @app.get("/health", include_in_schema=False)
-def health():
-    return {"ok": True, "valio_api_key": bool(config.VALIO_API_KEY), "gemini": bool(config.GEMINI_API_KEY),
+async def health():
+    return {"ok": True, "valio_api_key": bool(config.VALIO_API_KEY), "valio_api": await valio_client.ping(),
+            "gemini": bool(config.GEMINI_API_KEY),
             "elevenlabs": voice.enabled(),
             "scenario": valio_client.active_scenario()}
 
