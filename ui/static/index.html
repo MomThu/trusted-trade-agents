@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Trusted Trade Agents</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <span class="logo">VA</span>
+    <div>
+      <strong>Trusted Trade Agents</strong>
+      <small>Valio Aimo side · rules decide, humans sign off on exceptions</small>
+    </div>
+  </div>
+  <div class="top-controls">
+    <label class="scenario" title="Demo overlay on top of the live Valio APIs. Every affected offer says so in its provenance.">
+      Demo overlay
+      <select id="scenario"></select>
+    </label>
+    <span id="health" class="health"></span>
+    <button id="reset" class="ghost" title="Delete all demo orders and audit entries">Reset demo</button>
+  </div>
+</header>
+
+<nav class="tabs" role="tablist">
+  <button data-tab="approvals" class="active">Approvals <span id="pending-count" class="badge">0</span></button>
+  <button data-tab="orders">Orders</button>
+  <button data-tab="agent">Agent console</button>
+  <button data-tab="audit">Audit log</button>
+  <button data-tab="mandates">Mandates</button>
+</nav>
+
+<main>
+  <section id="tab-approvals" class="tab active">
+    <p class="lede">Only exceptions land here: over the spend limit, substitutions, missing allergen data for strict buyers, and risk flags. Routine orders are placed automatically and stay cancellable until the cut-off.</p>
+    <div id="approvals"></div>
+  </section>
+
+  <section id="tab-orders" class="tab">
+    <div class="toolbar">
+      <select id="orders-buyer"><option value="">All buyers</option></select>
+      <select id="orders-status">
+        <option value="">All statuses</option>
+        <option>placed</option><option>pending_approval</option><option>approved</option><option>rejected</option><option>cancelled</option>
+      </select>
+    </div>
+    <div class="table-wrap"><table id="orders-table"></table></div>
+  </section>
+
+  <section id="tab-agent" class="tab">
+    <p class="lede">The reference buyer agent is an <b>external</b> client: it reaches Valio only through the MCP endpoint at <code>/mcp</code> with its customer's API key, like any vendor's agent would.</p>
+    <div class="agent-grid">
+      <div class="card">
+        <h3>Scripted demo runs</h3>
+        <p class="muted">A basic agent that accepts Valio's suggested plan and fixes errors from the request check's messages. No LLM, fully reproducible.</p>
+        <div id="presets" class="presets"></div>
+      </div>
+      <div class="card">
+        <h3>Free text (Gemini agent)</h3>
+        <label>Buyer <select id="llm-buyer"></select></label>
+        <textarea id="llm-text" rows="3">I need 1,000 litres of lactose-free milk by Monday. Find an option that meets our requirements based on price and availability.</textarea>
+        <button id="llm-run">Run agent</button>
+        <p id="llm-note" class="muted"></p>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Transcript <span id="run-status" class="muted"></span></h3>
+      <ol id="transcript" class="transcript"><li class="muted">Run a preset or a free-text request.</li></ol>
+    </div>
+  </section>
+
+  <section id="tab-audit" class="tab">
+    <div class="toolbar">
+      <select id="audit-buyer"><option value="">All buyers (Valio view)</option></select>
+      <span class="muted">Every outcome is stored with its reason, readable by both the buyer and Valio.</span>
+    </div>
+    <ol id="audit" class="audit"></ol>
+  </section>
+
+  <section id="tab-mandates" class="tab">
+    <p class="lede">Each buyer's mandate is configuration. Start with a low limit and raise it as the agent proves itself; onboarding a customer is a config change, not an integration project.</p>
+    <div id="mandates" class="mandates"></div>
+  </section>
+</main>
+
+<dialog id="order-dialog"><div id="order-detail"></div><form method="dialog"><button class="ghost">Close</button></form></dialog>
+<div id="toast" class="toast" role="status"></div>
+<script src="app.js"></script>
+</body>
+</html>

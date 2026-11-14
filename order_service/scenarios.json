@@ -1,0 +1,11 @@
+{
+  "_comment": "Demo scenario overlays applied on top of LIVE availability responses, for testing exception paths the static mock cannot produce (it ignores requestedDate). Off by default. When active, every affected offer's provenance says so. Amounts are in sales units.",
+  "milk_partial": {
+    "description": "Cheapest lactose-free milk (464306, 1 L cartons) has only 600 units for Monday; the rest must come from Valio's official substitutes.",
+    "availability": {"464306": {"availableAmount": 600}}
+  },
+  "price_rise": {
+    "description": "Price of 464306 rises 8% between offer and order (tests the price_changed rule).",
+    "price_multiplier": {"464306": 1.08}
+  }
+}
