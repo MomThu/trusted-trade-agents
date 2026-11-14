@@ -36,7 +36,8 @@ predictable and auditable. Safety never depends on the agent's quality.
   "exclude_allergens": ["nuts"],
   "preferences": {"priority": "price", "max_unit_price_eur": 70, "allow_substitutes": true,
                   "accept_partial": false, "country": "fi"},
-  "category": null, "product_codes": null                   // optional narrowing
+  "category": null, "product_codes": null,                  // optional narrowing
+  "unresolved": null          // the agent's own doubt, e.g. "which cheese the chef liked is unknown" -> always a human
 }
 ```
 
@@ -44,8 +45,10 @@ Required: `text, query, quantity, unit, deliver_by`. Labels: lactose-free, low-l
 vegetarian, egg-free, soy-free, no-added-sugar, organic, finnish, msc, asc, fairtrade, rainforest-alliance,
 nordic-swan, eu-ecolabel. Allergen groups: milk, lactose, eggs, fish, crustaceans, molluscs, peanuts, nuts, gluten,
 wheat, sesame, soy, celery, mustard, lupin, sulphites. Unknown terms are an error, never silently ignored.
-Requirements outside the schema ("the one the chef likes") stay visible in `text`; supporting them means
-extending the schema, not teaching the server to read language.
+Requirements outside the schema ("the one the chef likes", "fresh") stay visible in `text`, and the agent describes
+what it could not express or verify in `unresolved`. Any order with `unresolved` set goes to a human, who sees the
+doubt next to the order; the AI cross-check is the backstop for agents that guess without saying so. Supporting a
+new requirement properly means extending the schema, not teaching the server to read language.
 
 ### Offer (excerpt)
 
@@ -103,12 +106,23 @@ It writes the plain-language **"agent understood"** summary shown next to the bu
 | Outcome | When |
 |---|---|
 | `rejected` | sales block, not deliverable, no price at re-check |
-| `pending_approval` | over spend limit; any substitution (if mandate says so); allergen-strict buyer with missing allergen data; any risk flag |
+| `pending_approval` | agent declared a doubt (`unresolved`); over spend limit; any substitution (if mandate says so); missing allergen data for an excluded allergen; any risk flag |
 | `placed` | within mandate, no flags; cancellable until the earliest `closingTime` of its lines |
 
 Mandate (per buyer, configuration in `order_service/buyers.json`, editable in the UI and logged):
-`spend_limit_eur, allergen_strict, substitutions_need_approval, min_delivery_reliability,
-terminal_products_need_approval, unusual_quantity_factor, price_increase_tolerance_pct`.
+`spend_limit_eur, allergen_policy, substitutions_need_approval, min_delivery_reliability,
+unusual_quantity_factor, price_increase_tolerance_pct`.
+Fixed rules (not configurable): unknown supplier stock (Terminal), passed cut-off, later-than-requested
+delivery, a price rise above tolerance, and missing allergen data for any excluded allergen always go to a human.
+
+**Customer allergen policy.** `allergen_policy = {"exclude": [...], "confirmed_by", "confirmed_at"}` is the
+customer's standing allergen list, answered once at onboarding (an empty list confirmed by someone means "none").
+Valio merges it into **every** order's `exclude_allergens`, whatever the agent sends, so allergen safety never
+depends on the agent remembering it. Agents can add allergens for one order but never remove the customer's.
+CONTAINS / MAY_CONTAIN → product filtered out, or a request-check error if ordered anyway; no statement → human.
+The approval card says where each requirement came from ("nuts (customer allergen policy)", "celery (this order)").
+`find_offers` returns the enforced labels and allergens under `enforced`. The need fingerprint is computed from the
+enforced need, so an agent may resend its own need or the enforced one.
 
 Order states: `placed`, `pending_approval`, `approved` (= placed after sign-off), `rejected`, `cancelled`.
 
@@ -117,8 +131,13 @@ Order states: `placed`, `pending_approval`, `approved` (= placed after sign-off)
   need digest, expiry + HMAC-SHA256 with a server-only secret. Tampering, another buyer's offer or expiry → rejected.
 - **Provenance** on every claim: source and timestamp for price, availability (incl. whether stock is known),
   allergens (GS1 Synkka update date), reliability, carbon (group average, not per product).
-- **Optional AI cross-check** (`AI_CROSSCHECK=1`): an LLM compares `need.text` with the summary and may only *add*
-  `possible_misunderstanding`; it can never approve or place.
+- **AI cross-check** (`AI_CROSSCHECK=1`): an LLM compares the buyer's words (`need.text`) with the order summary,
+  given facts from Valio (the ranking rule used, how often this buyer ordered each product before). It flags
+  requirements the order cannot confirm: an item identified by memory ("the cheese the chef liked", "same as last
+  time" with no history), a quality the product name does not confirm ("fresh"), or a different product, quantity
+  or date. It may only *add* `possible_misunderstanding` (→ human approval); it can never approve, place or change
+  an order, and if the LLM is unavailable the order proceeds on the rules alone. This catches what the schema
+  cannot express, so safety does not depend on the buyer agent noticing it.
 
 ## 4. How we read Valio's data (assumptions, visible on purpose)
 - **Terminal + 999999** = supplier stock unknown, never "unlimited". Stock values ≥ 10⁸ are placeholders for ample stock.

@@ -30,6 +30,28 @@ def fmt_qty(x: float) -> str:
     return f"{x:,.0f}" if abs(x - round(x)) < 1e-9 else f"{x:,.2f}"
 
 
+def customer_allergens(buyer: dict) -> list[str]:
+    return list((buyer["mandate"].get("allergen_policy") or {}).get("exclude") or [])
+
+
+def effective_need(buyer: dict, need: Need) -> tuple[Need, list[str]]:
+    """The need Valio actually enforces: the agent's declared need, plus label words found in
+    the query, plus the customer's standing allergen list (applied whatever the agent sends).
+    Returns (effective need, notes). Merging is idempotent, so the signed fingerprint of the
+    effective need matches whether the agent resends its own need or the enforced one."""
+    _, label_words = catalog.split_query(need.query)
+    policy = customer_allergens(buyer)
+    labels = sorted(set(need.required_labels) | set(label_words))
+    excl = sorted(set(need.exclude_allergens) | set(policy))
+    notes = []
+    if set(label_words) - set(need.required_labels):
+        notes.append(f"Query words read as required labels: {sorted(set(label_words) - set(need.required_labels))}")
+    added = sorted(set(policy) - set(need.exclude_allergens))
+    if added:
+        notes.append(f"Customer allergen policy applied: also excluding {added}")
+    return need.model_copy(update={"required_labels": labels, "exclude_allergens": excl}), notes
+
+
 def resolve_measure(p: dict, price: dict, unit: str) -> dict:
     """Amount of the need's unit per sales unit. Local data, confirmed or corrected by
     the price API (catalogPrice / comparisonPrice when comparisonUnit matches)."""
@@ -221,15 +243,20 @@ async def find_offers(buyer: dict, need: Need) -> dict:
         return {"error": f"deliver_by {need.deliver_by} is in the past", "hint": "Use a date today or later"}
     mandate = buyer["mandate"]
     try:
+        catalog.validate_labels(need.required_labels)
+        catalog.validate_allergens(need.exclude_allergens)
+    except catalog.UnknownTerm as e:
+        return {"error": str(e), "hint": "Fix the declared need and call find_offers again"}
+    need, enforce_notes = effective_need(buyer, need)
+    digest = need.digest()      # fingerprint of the ENFORCED need: same whether the agent resends its own or this one
+    try:
         found = catalog.search_local_products(
             need.query, need.required_labels, need.exclude_allergens, need.unit,
             need.category, need.product_codes, limit=config.LIVE_CANDIDATES)
     except catalog.UnknownTerm as e:
         return {"error": str(e), "hint": "Fix the declared need and call find_offers again"}
 
-    # Labels found in the query become part of the need (visible to the agent).
-    if found["required_labels"] != need.required_labels:
-        need = need.model_copy(update={"required_labels": found["required_labels"]})
+    found["notes"] = enforce_notes + [n for n in found["notes"] if not n.startswith("Query words read as")]
     if not found["candidates"]:
         db.audit("find_offers", f"No catalog match for '{need.query}'", buyer_id=buyer["buyer_id"], actor=f"agent:{buyer['buyer_id']}",
                  data={"need": need.model_dump(mode="json"), "dropped": found["dropped"]})
@@ -260,7 +287,6 @@ async def find_offers(buyer: dict, need: Need) -> dict:
 
     issued_at = int(time.time())
     expires_at = issued_at + config.OFFER_TTL_SECONDS
-    digest = need.digest()
     offers: dict[str, dict] = {}
     for code in codes:
         is_primary = code in primaries
@@ -327,12 +353,15 @@ async def find_offers(buyer: dict, need: Need) -> dict:
                    "candidates": codes, "dropped": found["dropped"], "scenario": active_scenario()})
     return {
         "need": need.model_dump(mode="json"),
+        "enforced": {"required_labels": need.required_labels, "exclude_allergens": need.exclude_allergens,
+                     "customer_allergen_policy": customer_allergens(buyer)},
         "need_digest": digest,
         "search": {k: found[k] for k in ("query_words", "required_labels", "category", "total_matches", "dropped", "notes")},
         "offers": ordered,
         "suggested_plan": plan,
         "valid_until": expires_at,
-        "how_to_order": "Call place_order with lines=[{offer_id, quantity}] (quantities in sales units) and the SAME need. "
+        "how_to_order": "Call place_order with lines=[{offer_id, quantity}] (quantities in sales units) and the same need "
+                        "(your own or the enforced one: Valio re-applies its rules either way). "
                         "A basic agent can pass suggested_plan.lines as-is.",
         "scenario": active_scenario(),
     }

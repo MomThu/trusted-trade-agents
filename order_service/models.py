@@ -32,6 +32,9 @@ class Need(BaseModel):
     preferences: Preferences = Field(default_factory=Preferences)
     category: str | None = Field(None, description="Optional product category code to search in")
     product_codes: list[str] | None = Field(None, description="Optional: restrict to these product codes (e.g. the usual product)")
+    unresolved: str | None = Field(None, description="Anything in the buyer's words the agent could not express in this schema "
+                                   "or verify, e.g. 'which cheese the chef liked last time' or 'must be fresh'. "
+                                   "An order with this set always goes to a human, who sees the doubt next to the order.")
 
     @field_validator("unit", mode="before")
     @classmethod

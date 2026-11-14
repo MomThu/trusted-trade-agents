@@ -173,7 +173,12 @@ Rules:
   something it ignores. If place_order returns errors, fix exactly what they say and retry (max 3 attempts).
 - Report honestly in 2-4 sentences: what was ordered or proposed, the total, and whether it is placed or
   waiting for human approval (and why). Never say an order is placed if it is pending approval.
-- If the request is ambiguous in a way the schema cannot express, still declare the parts you can and mention the rest."""
+- If the buyer's words contain something the schema cannot express or you cannot verify ("the one the chef liked",
+  "same as last time", "fresh"), declare the parts you can, order the best matching offer, and describe the doubt in
+  `unresolved` (e.g. "which cheese the chef liked last time is unknown; proposed the cheapest hard cheese").
+  Valio then sends the order to a human approver instead of placing it. Never hide a doubt.
+- If the exact item is unavailable, try at most 2 alternative searches, then order the closest option with the
+  difference described in `unresolved`."""
 
 
 def _inline_refs(schema: dict) -> dict:

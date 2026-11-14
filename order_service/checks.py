@@ -12,7 +12,7 @@ from datetime import date
 from data import catalog
 from order_service import config, db
 from order_service.models import Need, OrderLine
-from order_service.offers import UNIT_LABEL, fmt_qty, resolve_measure, round_down, round_up
+from order_service.offers import UNIT_LABEL, effective_need, fmt_qty, resolve_measure, round_down, round_up
 from order_service.signing import OfferError, short_ref, verify_offer
 from order_service.valio_client import ValioAPIError, price_and_availability
 
@@ -55,6 +55,7 @@ async def request_check(buyer: dict, lines: list[OrderLine], need: Need) -> Chec
     if not lines:
         res.error("no_lines", "Order has no lines")
         return res
+    need, _ = effective_need(buyer, need)       # Valio enforces labels from the query + customer allergen list
     digest = need.digest()
     offers = []
     for i, line in enumerate(lines):
@@ -70,6 +71,13 @@ async def request_check(buyer: dict, lines: list[OrderLine], need: Need) -> Chec
         offers.append((i, line, facts))
     if res.errors:
         return res
+
+    if need.unresolved:
+        res.flag("agent_unresolved")
+    pol = mandate.get("allergen_policy") or {}
+    if not pol.get("confirmed_at"):
+        res.flag("allergen_policy_unconfirmed")
+        res.notes.append("This customer's allergen policy has not been confirmed yet")
 
     codes = [f["product_code"] for _, _, f in offers]
     if len(set(codes)) != len(codes):
@@ -101,13 +109,15 @@ async def request_check(buyer: dict, lines: list[OrderLine], need: Need) -> Chec
                       f"Try {' or '.join(fmt_qty(s) for s in sug)}.", i, suggestions=sug, step=step)
 
         # labels and allergens vs the declared need
+        policy_allergens = set((mandate.get("allergen_policy") or {}).get("exclude") or [])
         missing = [l for l in need.required_labels if not catalog.label_ok(p, l)]
         if missing:
             res.error("label_mismatch", f"{name} does not carry required label(s) {missing}", i)
         for g in need.exclude_allergens:
             s = catalog.allergen_status(p, g)
             if s in ("contains", "may_contain"):
-                res.error("allergen_conflict", f"{name} {s.replace('_', ' ')} {g}, which the need excludes", i)
+                src = "the customer's allergen policy" if g in policy_allergens else "the need"
+                res.error("allergen_conflict", f"{name} {s.replace('_', ' ')} {g}, which {src} excludes. Choose another offer.", i)
             elif s == "unknown":
                 line_flags.append(f"allergen_unknown:{g}")
 
@@ -198,6 +208,7 @@ async def request_check(buyer: dict, lines: list[OrderLine], need: Need) -> Chec
             res.error("quantity_over", f"Lines add up to {fmt_qty(total_measure)} {unit}, far over the need of {fmt_qty(q)} {unit}. "
                       "Reduce quantities.", covered=round(total_measure, 3))
     res.covered = total_measure
+    res.need = need
     return res
 
 

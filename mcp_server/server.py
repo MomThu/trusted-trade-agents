@@ -34,7 +34,8 @@ Workflow: (1) translate the buyer's words into a declared `need` (see get_need_s
 (2) call find_offers(need); (3) call place_order(lines, need) with the SAME need, usually
 passing suggested_plan.lines as-is; (4) report the outcome honestly. If place_order returns
 errors, fix exactly what they say and retry. pending_approval means a human must sign off:
-say so, do not claim the order is placed. Never claim a product is allergen-safe unless its
+say so, do not claim the order is placed. If you could not express or verify part of the buyer's
+request, say so in need.unresolved: the order then goes to a human instead of being guessed. Never claim a product is allergen-safe unless its
 allergen status is 'free_from'. Prices are fixed (no negotiation) and exclude VAT."""
 
 mcp = FastMCP(
@@ -99,7 +100,8 @@ def get_need_schema() -> dict:
                     "deliver_by": "2026-11-16", "required_labels": ["lactose-free"], "exclude_allergens": [],
                     "preferences": {"priority": "price", "allow_substitutes": True}},
         "notes": ["query = product words only (fi/sv/en), e.g. 'milk', 'maito', 'whipping cream'",
-                  "Requirements outside this schema ('the one the chef likes') get no plan; keep them in `text`",
+                  "Requirements outside this schema ('the one the chef likes', 'fresh') cannot be checked by Valio: keep them "
+                  "in `text` and describe your doubt in `unresolved`; such orders always go to a human approver",
                   "Allergen status 'unknown' means no manufacturer statement: never treat it as safe"],
     }
 

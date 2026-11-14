@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from agent import buyer_agent
+from data.vocab import ALLERGENS
 from order_service import config, db, orders, valio_client
 from order_service.models import Need, OrderLine
 from order_service.offers import find_offers
@@ -45,6 +46,15 @@ app = FastAPI(
                 "Humans: /api/ui (approve, reject, cancel, mandates). Rules decide; no AI decides.",
     lifespan=lifespan,
 )
+
+
+@app.middleware("http")
+async def no_stale_ui(request: Request, call_next):
+    """Browsers must revalidate the UI files, so a reload always shows the latest version."""
+    response = await call_next(request)
+    if request.url.path.startswith("/ui"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
 
 
 # ------------------------------------------------------------------ auth
@@ -150,17 +160,28 @@ def ui_buyers(_: str = Depends(staff)):
 
 class MandateUpdate(BaseModel):
     spend_limit_eur: float | None = None
-    allergen_strict: bool | None = None
+    allergen_policy_exclude: list[str] | None = None
     substitutions_need_approval: bool | None = None
     min_delivery_reliability: float | None = None
-    terminal_products_need_approval: bool | None = None
     unusual_quantity_factor: float | None = None
     price_increase_tolerance_pct: float | None = None
+
+
+@app.get("/api/ui/vocab", tags=["human"])
+def ui_vocab(_: str = Depends(staff)):
+    return {"allergen_groups": sorted(ALLERGENS)}
 
 
 @app.put("/api/ui/buyers/{buyer_id}/mandate", tags=["human"])
 def ui_mandate(buyer_id: str, m: MandateUpdate, _: str = Depends(staff)):
     changes = m.model_dump(exclude_none=True)
+    if "allergen_policy_exclude" in changes:
+        groups = sorted(set(changes.pop("allergen_policy_exclude")))
+        bad = [g for g in groups if g not in ALLERGENS]
+        if bad:
+            raise HTTPException(422, f"unknown allergen group(s): {bad}")
+        changes["allergen_policy"] = {"exclude": groups, "confirmed_by": "Valio admin (on behalf of customer)",
+                                      "confirmed_at": db.now_iso()}
     try:
         b = config.save_mandate(buyer_id, changes)
     except KeyError:
@@ -191,7 +212,7 @@ def ui_scenario_set(body: ScenarioBody, _: str = Depends(staff)):
 
 @app.post("/api/ui/reset", tags=["demo"])
 def ui_reset(_: str = Depends(staff)):
-    db.reset()
+    db.reset(seed=True)
     valio_client.set_scenario(None)
     return {"ok": True}
 

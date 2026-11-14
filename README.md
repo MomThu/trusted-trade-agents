@@ -54,9 +54,13 @@ BUYER_API_KEY=demo-hotel-aurora-key .venv/bin/python -m mcp_server.server     # 
 |---|---|---|---|
 | 1 | Hotel Aurora | 1,000 L lactose-free milk by Monday | Cheapest milk has only 600 units → plan adds 400 of **Valio's official substitute** (ranked best). Substitution + over €1,000 limit → **pending approval**; manager sees *buyer said vs. agent understood*, can approve or drop a line |
 | 2 | Hotel Aurora | weekly 60 L lactose-free milk | Within mandate, no flags → **placed automatically**, cancellable until cut-off (Sun 17:00) |
-| 3 | Koivu School (allergen-strict) | 40 kg potatoes, nut-free kitchen | Fresh produce has **no allergen statement** → never treated as safe → escalated |
+| 3 | Koivu School (allergen policy: nuts, peanuts, sesame) | 40 kg potatoes | The agent declares **no** allergens, but Valio applies the school's standing allergen list anyway. Fresh produce has **no allergen statement** → never treated as safe → escalated |
 | 4 | Bistro Satama | 100 kg sea bass | Agent sends 100 of a lot-6 product → *"Quantity 100 … is not a multiple of 6. Try 96 or 102."* → agent fixes itself → placed |
 | 5 | Hotel Aurora | 80 L lactose-free milk | Price rises between offer and order → `price_changed` → approval with old and new price |
+
+**Reset demo** also seeds four past weekly 60 L milk orders for Hotel Aurora (marked "seeded demo history"), so
+"our usual milk" and the unusual-quantity check have real history. Set `AI_CROSSCHECK=1` in `.env` to switch on the
+Valio-side AI cross-check (it can only send orders to a human, never approve them).
 
 Run 1 and 5 use a **demo overlay** (top bar) because the mock API is static (it ignores the requested date and
 the cheapest milk has unlimited stock). The overlay only edits the live response, and every affected offer and order

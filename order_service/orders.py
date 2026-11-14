@@ -41,16 +41,23 @@ async def place_order(buyer: dict, lines: list[OrderLine], need: Need) -> dict:
                         "(or find_offers again if an offer expired)."}
 
     total = round(sum(l["line_total_eur"] for l in res.lines), 2)
-    summary = summarise(need, res.lines)
+    summary = summarise(res.need, res.lines)
 
     if config.AI_CROSSCHECK:
         from order_service.crosscheck import crosscheck
-        verdict = await crosscheck(need, summary)
+        from order_service.checks import _history_avg
+        hist = []
+        for l in res.lines:
+            _, n = _history_avg(buyer["buyer_id"], l["product_code"])
+            hist.append(f"{l['product_code']} ordered by this buyer {n} time(s) before")
+        context = (f"offers were ranked by {res.need.preferences.priority} (best first) among products meeting every "
+                   f"declared requirement; " + "; ".join(hist))
+        verdict = await crosscheck(res.need, summary, context)
         if verdict:
             res.flag("possible_misunderstanding")
             res.notes.append(f"AI cross-check: {verdict}")
 
-    outcome, reasons = evaluate(total, res.lines, res.flags, res.reject_reasons, buyer["mandate"])
+    outcome, reasons = evaluate(total, res.lines, res.flags, res.reject_reasons, buyer["mandate"], res.need.unresolved)
     closings = [parse_ts(l["closing_time"]) for l in res.lines if l.get("closing_time")]
     open_closings = [c for c in closings if c and c > now()]
     cancel_until = min(open_closings).isoformat() if open_closings and len(open_closings) == len(closings) else None
@@ -59,7 +66,7 @@ async def place_order(buyer: dict, lines: list[OrderLine], need: Need) -> dict:
     ts = db.now_iso()
     notes = res.notes + ([f"Price change: {json.dumps(res.price_changes)}"] if res.price_changes else [])
     db.execute("INSERT INTO orders VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-               (order_id, buyer["buyer_id"], outcome, ts, ts, json.dumps(need.model_dump(mode="json"), ensure_ascii=False),
+               (order_id, buyer["buyer_id"], outcome, ts, ts, json.dumps(res.need.model_dump(mode="json"), ensure_ascii=False),
                 json.dumps(res.lines, ensure_ascii=False), total, json.dumps(res.flags), json.dumps(reasons),
                 summary, cancel_until, None, None, None, json.dumps({"notes": notes, "price_changes": res.price_changes})))
     reason_text = "; ".join(r["message"] for r in reasons)

@@ -12,22 +12,33 @@ import json
 from order_service import config
 from order_service.models import Need
 
-PROMPT = """You audit purchase orders made by an AI agent for a professional kitchen.
+PROMPT = """You check orders that an AI purchasing agent placed for a professional kitchen.
+The buyer may have asked for several products; this order may cover only ONE of them. Judge only this order's product.
+
 Buyer's own words: {text}
-Order the agent built: {summary}
-Does the order clearly contradict the buyer's words (wrong product type, wrong quantity or unit,
-wrong date, a dietary requirement ignored)? Minor differences in rounding, brand or pack size are fine.
-Answer JSON only: {{"mismatch": true|false, "reason": "<one short sentence>"}}"""
+This order: {summary}
+Facts from Valio (trust these): {context}
+
+Flag the order if, for the product in this order, the buyer's words contain a requirement the order does not clearly
+satisfy or that cannot be verified from it, for example:
+- a specific item identified by memory or history ("the one the chef liked", "same as last time", "our usual brand")
+  when the order does not show it is that item
+- a quality or state the product name does not confirm ("fresh", "organic", "boneless", "frozen", a brand, a size)
+- a clearly different product type, quantity, unit or date
+Do NOT flag: a ranking request ("cheapest", "most reliable") when the facts say Valio ranked by that priority;
+"usual" / "same as last time" when the facts show this buyer has ordered this product before; other products the buyer mentioned that belong to separate orders, rounding up to pack sizes,
+or generic requests ("milk", "butter") met by any matching product.
+Answer JSON only: {{"mismatch": true|false, "reason": "<one short sentence for a human approver>"}}"""
 
 
-async def crosscheck(need: Need, summary: str) -> str | None:
+async def crosscheck(need: Need, summary: str, context: str = "none") -> str | None:
     if not config.GEMINI_API_KEY:
         return None
     try:
         from google import genai
         client = genai.Client(api_key=config.GEMINI_API_KEY)
         resp = await asyncio.wait_for(client.aio.models.generate_content(
-            model=config.GEMINI_MODEL, contents=PROMPT.format(text=need.text, summary=summary),
+            model=config.GEMINI_MODEL, contents=PROMPT.format(text=need.text, summary=summary, context=context),
             config={"response_mime_type": "application/json", "temperature": 0}), timeout=12)
         data = json.loads(resp.text)
         return data.get("reason") or "possible mismatch" if data.get("mismatch") else None

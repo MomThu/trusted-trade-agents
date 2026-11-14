@@ -43,19 +43,15 @@
     },
     {
       "id": "school-potatoes-allergen",
-      "title": "3. Allergen-strict school, missing allergen data -> escalation",
+      "title": "3. School allergen policy enforced (agent forgot it) -> escalation",
       "buyer_key": "demo-school-koivu-key",
-      "text": "40 kg of potatoes for Monday. Remember we are a nut-free school kitchen.",
+      "text": "40 kg of potatoes for Monday.",
       "need": {
-        "text": "40 kg of potatoes for Monday. Remember we are a nut-free school kitchen.",
+        "text": "40 kg of potatoes for Monday.",
         "query": "potatoes",
         "quantity": 40,
         "unit": "KG",
         "deliver_by": "monday",
-        "exclude_allergens": [
-          "nuts",
-          "peanuts"
-        ],
         "preferences": {
           "priority": "price"
         }

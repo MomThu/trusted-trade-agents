@@ -1,5 +1,5 @@
 {
-  "_comment": "Demo buyers. Each customer gets its own API key; the server derives buyer_id from the key and never trusts a buyer_id sent by an agent. In production keys are hashed secrets issued at onboarding, not stored in the repo. Mandates are configuration: start low, raise as the agent proves itself.",
+  "_comment": "Demo buyers. Each customer gets its own API key; the server derives buyer_id from the key and never trusts a buyer_id sent by an agent. In production keys are hashed secrets issued at onboarding, not stored in the repo. Mandates are configuration: start low, raise as the agent proves itself. allergen_policy.exclude is the customer's standing allergen list, answered once at onboarding (an empty list confirmed by someone = 'none'); Valio checks it on every order whatever the agent sends.",
   "buyers": [
     {
       "buyer_id": "hotel-aurora",
@@ -8,10 +8,13 @@
       "customer_number": "100200",
       "mandate": {
         "spend_limit_eur": 1000,
-        "allergen_strict": false,
+        "allergen_policy": {
+          "exclude": [],
+          "confirmed_by": "Hotel Aurora purchasing manager",
+          "confirmed_at": "2026-11-13"
+        },
         "substitutions_need_approval": true,
         "min_delivery_reliability": 0.9,
-        "terminal_products_need_approval": true,
         "unusual_quantity_factor": 5,
         "price_increase_tolerance_pct": 0
       }
@@ -23,10 +26,17 @@
       "customer_number": "100300",
       "mandate": {
         "spend_limit_eur": 400,
-        "allergen_strict": true,
+        "allergen_policy": {
+          "exclude": [
+            "nuts",
+            "peanuts",
+            "sesame"
+          ],
+          "confirmed_by": "Koivu School kitchen manager",
+          "confirmed_at": "2026-11-13"
+        },
         "substitutions_need_approval": true,
         "min_delivery_reliability": 0.95,
-        "terminal_products_need_approval": true,
         "unusual_quantity_factor": 3,
         "price_increase_tolerance_pct": 0
       }
@@ -38,10 +48,13 @@
       "customer_number": "100400",
       "mandate": {
         "spend_limit_eur": 2500,
-        "allergen_strict": false,
+        "allergen_policy": {
+          "exclude": [],
+          "confirmed_by": "Bistro Satama head chef",
+          "confirmed_at": "2026-11-13"
+        },
         "substitutions_need_approval": false,
         "min_delivery_reliability": 0.85,
-        "terminal_products_need_approval": true,
         "unusual_quantity_factor": 5,
         "price_increase_tolerance_pct": 2
       }

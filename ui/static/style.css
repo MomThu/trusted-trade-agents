@@ -114,3 +114,11 @@ dialog::backdrop { background: rgba(0, 0, 0, .35); }
   .said-understood, .agent-grid { grid-template-columns: 1fr; }
   .audit li { grid-template-columns: 1fr; gap: 2px; }
 }
+
+fieldset.allergens { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin: 6px 0 10px; }
+fieldset.allergens legend { font-size: 12.5px; color: var(--muted); padding: 0 4px; }
+.allergen-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 2px 8px; }
+.mandates .allergen-grid label { justify-content: flex-start; gap: 6px; padding: 2px 0; font-size: 13px; }
+.said-understood.three { grid-template-columns: 1fr 1fr 1fr; }
+.doubt { background: var(--warn-bg); }
+@media (max-width: 760px) { .said-understood.three { grid-template-columns: 1fr; } }

@@ -12,6 +12,7 @@ from order_service.policy import evaluate
 from tests.conftest import stub
 
 run = asyncio.run
+NUT_PRODUCT = "460220"   # Fazer hazelnut milk chocolate: AN CONTAINS
 MILK = dict(text="Need 1,000 L lactose-free milk by Monday", query="milk", quantity=1000, unit="L",
             deliver_by="2099-11-16", required_labels=["lactose-free"])
 
@@ -100,14 +101,44 @@ def test_price_rise_goes_to_approval(hotel):
     assert res["status"] == "pending_approval" and "price_changed" in res["flags"]
 
 
-def test_allergen_strict_buyer_escalates_on_missing_data(school):
+def test_school_allergen_policy_applies_even_if_agent_omits_it(school):
     stub("470961", 9.78, comp=0.65)
-    need = Need(text="40 kg potatoes, nut-free", query="potatoes", quantity=40, unit="KG", deliver_by="2099-11-16",
-                exclude_allergens=["nuts"], category="17421")
+    need = Need(text="40 kg potatoes", query="potatoes", quantity=40, unit="KG", deliver_by="2099-11-16",
+                category="17421")                                  # agent declares NO allergens
     r = run(find_offers(school, need))
+    assert set(r["enforced"]["exclude_allergens"]) == {"nuts", "peanuts", "sesame"}
     res = run(place_order(school, lines_of(r["suggested_plan"]), need))
     assert res["status"] == "pending_approval"
-    assert any(x["code"] == "allergen_data_missing" for x in res["reasons"])
+    msg = next(x["message"] for x in res["reasons"] if x["code"] == "allergen_data_missing")
+    assert "nuts (customer allergen policy)" in msg
+
+
+def test_school_policy_blocks_product_containing_listed_allergen(school, hotel):
+    need = Need(text="nut product", query="x", quantity=1, unit="SALES_UNIT", deliver_by="2099-11-16",
+                product_codes=[NUT_PRODUCT])
+    stub(NUT_PRODUCT, 5.0)
+    assert run(find_offers(school, need))["offers"] == []            # filtered out for the school
+    assert run(find_offers(hotel, need))["offers"]                   # same request is fine for the hotel
+
+
+def test_unknown_allergen_for_order_specific_exclusion_escalates(hotel):
+    stub("470961", 9.78, comp=0.65)
+    need = Need(text="40 kg potatoes, guest with celery allergy", query="potatoes", quantity=40, unit="KG",
+                deliver_by="2099-11-16", exclude_allergens=["celery"], category="17421")
+    res = run(place_order(hotel, lines_of(run(find_offers(hotel, need))["suggested_plan"]), need))
+    msg = next(x["message"] for x in res["reasons"] if x["code"] == "allergen_data_missing")
+    assert "celery (this order)" in msg
+
+
+def test_label_words_in_query_do_not_break_need_fingerprint(hotel):
+    stub("464306", 1.01)
+    need = Need(text="60 L lactose-free milk", query="lactose-free milk", quantity=60, unit="L", deliver_by="2099-11-16")
+    r = run(find_offers(hotel, need))
+    assert r["enforced"]["required_labels"] == ["lactose-free"]
+    assert run(place_order(hotel, lines_of(r["suggested_plan"]), need))["status"] == "placed"          # own need
+    enforced = Need(**r["need"])
+    r2 = run(find_offers(hotel, need))
+    assert run(place_order(hotel, lines_of(r2["suggested_plan"]), enforced))["status"] != "error"      # or enforced one
 
 
 def test_terminal_and_cutoff_excluded_from_plan(hotel):
@@ -145,3 +176,11 @@ def test_policy_judges_whole_order():
     out, reasons = evaluate(1200, lines, [], [], {"spend_limit_eur": 1000})
     assert out == "pending_approval" and reasons[0]["code"] == "over_spend_limit"
     assert evaluate(10, lines, [], ["sales block"], {})[0] == "rejected"
+
+
+def test_agent_declared_doubt_always_goes_to_a_human(hotel):
+    stub("464306", 1.01)
+    need = Need(**{**MILK, "quantity": 60, "text": "the milk the chef liked", "unresolved": "which milk the chef liked is unknown"})
+    res = run(place_order(hotel, lines_of(run(find_offers(hotel, need))["suggested_plan"]), need))
+    assert res["status"] == "pending_approval"
+    assert res["reasons"][0] == {"code": "agent_unresolved", "message": "Agent could not resolve: which milk the chef liked is unknown"}
