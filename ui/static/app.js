@@ -183,7 +183,7 @@ async function loadMandates() {
 
 function renderEvents(events) {
   $("#transcript").innerHTML = events.map((e) => {
-    if (e.kind === "say") return `<li class="${e.who === "buyer" ? "buyer" : "agent"}"><span class="who">${e.who === "buyer" ? "Buyer (person)" : "Buyer agent"}</span>${esc(e.text)}</li>`;
+    if (e.kind === "say") return `<li class="${e.who === "buyer" ? "buyer" : "agent"}"><span class="who">${e.who === "buyer" ? "Buyer (person)" + (lastSpoken && e.text === lastSpoken.text ? ` · spoken${lastSpoken.language ? ", " + esc(lastSpoken.language) : ""}` : "") : "Buyer agent"}${e.who !== "buyer" && voiceOn ? `<button class="play" data-say="${esc(e.text)}">▶ Listen</button>` : ""}</span>${esc(e.text)}</li>`;
     if (e.kind === "tool_call") return `<li class="tool_call"><span class="who">Agent → Valio MCP</span>${esc(e.tool)}(${esc(JSON.stringify(e.args).slice(0, 700))}${JSON.stringify(e.args).length > 700 ? "…" : ""})</li>`;
     if (e.kind === "tool_result") return `<li class="tool_result ${/^(ERROR|REQUEST CHECK FAILED)/.test(e.brief) ? "err" : ""}"><span class="who">Valio → agent</span>${esc(e.brief)}</li>`;
     return `<li class="error"><span class="who">${esc(e.kind)}</span>${esc(e.text || JSON.stringify(e))}</li>`;
@@ -197,6 +197,9 @@ async function runAgent(body, btn) {
   try {
     const r = await api("/api/ui/agent/run", { method: "POST", body: JSON.stringify(body) });
     renderEvents(r.events);
+    $("#transcript").querySelectorAll("button.play").forEach((b) => b.onclick = () => speak(b.dataset.say));
+    const finalSay = [...r.events].reverse().find((e) => e.kind === "say" && e.who !== "buyer");
+    if (body.text && voiceOn && $("#speak-replies").checked && finalSay) speak(finalSay.text);
     $("#run-status").textContent = `· ${r.mode} agent · outcome: ${r.outcome || "none"}${r.order_id ? " · " + r.order_id : ""}`;
     if (!r.order_id) $("#transcript").insertAdjacentHTML("afterbegin", `<li class="error"><span class="who">No order was created</span>The agent stopped without ordering. Read its last message: it may be waiting for the buyer's answer. Nothing appears in Approvals.</li>`);
     else if (r.outcome === "pending_approval") $("#transcript").insertAdjacentHTML("afterbegin", `<li class="tool_result"><span class="who">Waiting for a human</span>Order ${esc(r.order_id)} is in the Approvals tab.</li>`);
@@ -217,7 +220,11 @@ async function loadBuyers() {
 
 async function loadTop() {
   const [h, sc, presets] = await Promise.all([fetch("/health").then((r) => r.json()), api("/api/ui/scenario"), api("/api/ui/presets")]);
-  $("#health").textContent = `Valio API ${h.valio_api_key ? "✓" : "✗ (no key)"} · Gemini ${h.gemini ? "✓" : "✗"}`;
+  $("#health").textContent = `Valio API ${h.valio_api_key ? "✓" : "✗ (no key)"} · Gemini ${h.gemini ? "✓" : "✗"} · ElevenLabs ${h.elevenlabs ? "✓" : "✗"}`;
+  voiceOn = !!h.elevenlabs;
+  $("#mic").disabled = !(h.elevenlabs && h.gemini);
+  $("#speak-replies").disabled = !h.elevenlabs;
+  $("#mic").title = h.elevenlabs ? "Speak to the buyer agent (ElevenLabs speech-to-text)" : "Add ELEVENLABS_API_KEY to .env and restart";
   $("#llm-note").textContent = h.gemini ? "" : "GEMINI_API_KEY is not set in .env: use the scripted runs, or add a key and restart.";
   $("#llm-run").disabled = !h.gemini;
   const s = $("#scenario");
@@ -243,6 +250,145 @@ $("#orders-buyer").onchange = $("#orders-status").onchange = loadOrders;
 $("#audit-buyer").onchange = loadAudit;
 $("#scenario").onchange = async (e) => { await api("/api/ui/scenario", { method: "POST", body: JSON.stringify({ name: e.target.value || null }) }); toast(e.target.value ? `Overlay '${e.target.value}' on` : "Overlay off: live data only"); };
 $("#reset").onclick = async () => { if (!confirm("Delete all demo orders and audit entries?")) return; await api("/api/ui/reset", { method: "POST" }); toast("Demo reset"); loadTop(); refresh(); };
-$("#llm-run").onclick = () => runAgent({ text: $("#llm-text").value, buyer_id: $("#llm-buyer").value });
+$("#llm-run").onclick = () => { lastSpoken = null; runAgent({ text: $("#llm-text").value, buyer_id: $("#llm-buyer").value }); };
+
+// ---------------------------------------------------------------- voice (buyer agent side, ElevenLabs)
+// The chef talks to THEIR agent; the agent still talks to Valio only in JSON over MCP.
+let voiceOn = false, lastSpoken = null, recorder = null, chunks = [], player = null;
+
+async function speak(text) {
+  try {
+    $("#voice-status").textContent = "🔊 Generating speech…";
+    const r = await fetch("/api/ui/agent/voice/tts", { method: "POST", headers: STAFF, body: JSON.stringify({ text }) });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+    if (player) player.pause();
+    player = new Audio(URL.createObjectURL(await r.blob()));
+    player.onended = () => { $("#voice-status").textContent = ""; };
+    await player.play();
+    $("#voice-status").textContent = "🔊 Speaking… (ElevenLabs text-to-speech)";
+  } catch (e) { $("#voice-status").textContent = "Speech failed: " + e.message; }
+}
+
+async function startBatchRecording() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    recorder = new MediaRecorder(stream);
+    chunks = [];
+    recorder.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+    recorder.onstop = async () => {
+      stream.getTracks().forEach((t) => t.stop());
+      micUi(false);
+      const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+      $("#voice-status").textContent = "📝 Transcribing… (ElevenLabs speech-to-text)";
+      const form = new FormData();
+      form.append("audio", blob, "speech." + ((recorder.mimeType || "audio/webm").includes("mp4") ? "mp4" : "webm"));
+      try {
+        const r = await fetch("/api/ui/agent/voice/stt", { method: "POST", headers: { "X-Staff-Key": STAFF["X-Staff-Key"] }, body: form });
+        const out = await r.json();
+        if (!r.ok) throw new Error(out.detail || r.statusText);
+        if (!out.text) { $("#voice-status").textContent = "Didn't catch that, please try again."; return; }
+        $("#llm-text").value = out.text;
+        lastSpoken = out;
+        $("#voice-status").textContent = `Heard${out.language ? " (" + out.language + ")" : ""}: “${out.text}”`;
+        runAgent({ text: out.text, buyer_id: $("#llm-buyer").value });
+      } catch (e) { $("#voice-status").textContent = "Transcription failed: " + e.message; }
+    };
+    recorder.start();
+    micUi(true);
+    $("#voice-status").textContent = "🎙 Listening… click Stop when done.";
+  } catch (e) { $("#voice-status").textContent = "Microphone not available: " + e.message; }
+}
+
+// Live transcription: mic -> 16 kHz PCM -> ElevenLabs Scribe realtime (WebSocket). The text box updates while
+// the buyer speaks. Falls back to record-then-transcribe if streaming is unavailable.
+let live = null;
+const MIC_IDLE = "🎙 Speak";
+
+function micUi(on) {
+  $("#mic").classList.toggle("recording", on);
+  $("#mic").textContent = on ? "■ Stop" : MIC_IDLE;
+}
+
+function floatTo16kPcm(input, inRate) {
+  const ratio = inRate / 16000, n = Math.floor(input.length / ratio), out = new Int16Array(n);
+  for (let i = 0; i < n; i++) {
+    const s = Math.max(-1, Math.min(1, input[Math.floor(i * ratio)]));
+    out[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+  }
+  return out;
+}
+function b64(int16) {
+  const bytes = new Uint8Array(int16.buffer); let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+
+async function startLive() {
+  const tok = await api("/api/ui/agent/voice/realtime-token", { method: "POST" });
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
+  const ws = new WebSocket(`wss://api.elevenlabs.io/v1/speech-to-text/realtime?model_id=${encodeURIComponent(tok.model_id)}` +
+    `&audio_format=pcm_16000&commit_strategy=vad&token=${encodeURIComponent(tok.token)}`);
+  await new Promise((ok, fail) => { ws.onopen = ok; ws.onerror = () => fail(new Error("could not connect to ElevenLabs realtime")); });
+
+  const ctx = new AudioContext();
+  const src = ctx.createMediaStreamSource(stream);
+  const proc = ctx.createScriptProcessor(4096, 1, 1);          // ~85-250 ms chunks; simple and widely supported
+  const st = { ws, ctx, stream, src, proc, committed: [], partial: "", closed: false, finalWaiter: null };
+  const box = $("#llm-text");
+  const render = () => { box.value = [...st.committed, st.partial].filter(Boolean).join(" "); };
+
+  ws.onmessage = (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.message_type === "partial_transcript") { st.partial = m.text || ""; render(); }
+    else if (m.message_type === "committed_transcript") {
+      const t = (m.text || "").trim() || st.partial.trim();      // an empty commit keeps the last partial
+      if (t) st.committed.push(t);
+      st.partial = ""; render();
+      if (st.finalWaiter) st.finalWaiter();
+    } else if (/error|exceeded|limited|exhausted/.test(m.message_type)) {
+      $("#voice-status").textContent = `ElevenLabs: ${m.message_type} ${m.error || ""}`;
+    }
+  };
+  ws.onclose = () => { st.closed = true; if (st.finalWaiter) st.finalWaiter(); };
+  proc.onaudioprocess = (e) => {
+    if (ws.readyState !== WebSocket.OPEN) return;
+    const pcm = floatTo16kPcm(e.inputBuffer.getChannelData(0), ctx.sampleRate);
+    ws.send(JSON.stringify({ message_type: "input_audio_chunk", audio_base_64: b64(pcm), commit: false, sample_rate: 16000 }));
+  };
+  src.connect(proc); proc.connect(ctx.destination);
+  box.value = ""; lastSpoken = null;
+  live = st;
+  micUi(true);
+  $("#voice-status").textContent = "🎙 Listening (live, ElevenLabs Scribe realtime)… click Stop when done.";
+}
+
+async function stopLive() {
+  const st = live; live = null;
+  micUi(false);
+  st.proc.disconnect(); st.src.disconnect(); st.stream.getTracks().forEach((t) => t.stop()); st.ctx.close();
+  if (st.ws.readyState === WebSocket.OPEN) {
+    const done = new Promise((ok) => { st.finalWaiter = ok; setTimeout(ok, 1500); });
+    st.ws.send(JSON.stringify({ message_type: "input_audio_chunk", audio_base_64: "", commit: true, sample_rate: 16000 }));
+    await done;
+    st.ws.close();
+  }
+  const text = [...st.committed, st.partial].filter(Boolean).join(" ").trim();
+  $("#llm-text").value = text;
+  if (!text) { $("#voice-status").textContent = "Didn't catch that, please try again."; return; }
+  lastSpoken = { text, language: null };
+  $("#voice-status").textContent = `Heard: “${text}”`;
+  runAgent({ text, buyer_id: $("#llm-buyer").value });
+}
+
+$("#mic").onclick = async () => {
+  if (live) return stopLive();
+  if (recorder && recorder.state === "recording") return recorder.stop();
+  try { await startLive(); }
+  catch (e) {
+    console.warn("live transcription unavailable, falling back:", e);
+    $("#voice-status").textContent = `Live transcription unavailable (${e.message}); recording instead…`;
+    startBatchRecording();
+  }
+};
 
 (async () => { await loadBuyers(); await loadTop(); await refresh(); setInterval(() => loadApprovals().catch(() => {}), 5000); })();

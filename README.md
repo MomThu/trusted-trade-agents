@@ -31,6 +31,7 @@ Buyer (person) ── plain words ──> Buyer agent (any vendor) ── JSON t
    | `GEMINI_API_KEY` | free-text agent + AI cross-check | optional; scripted demo runs work without it |
    | `GEMINI_MODEL` | | default `gemini-4-hydrogen` (fastest in our tests) |
    | `AI_CROSSCHECK` | Valio-side AI cross-check | `1` = on (recommended for the demo), needs `GEMINI_API_KEY` |
+   | `ELEVENLABS_API_KEY` | voice for the buyer agent | optional; speech-to-text in, text-to-speech out (see "Voice" below) |
 
 3. Run:
 
@@ -133,6 +134,32 @@ Pick the buyer, paste the prompt, click **Run agent**. Results below are from ou
 More ideas: *"Our usual weekly 60 litres of lactose-free milk"* (placed, history matches), *"Same as last week but
 double"* (unusual quantity), *"Whipping cream, 20 litres, organic"* (label filter).
 
+## Voice: talk to the buyer agent (ElevenLabs)
+
+Kitchens are busy and hands are full, so the **buyer's agent** can be spoken to. Voice belongs to the buyer's side:
+the chef talks to *their* agent, and the agent still talks to Valio only in JSON over MCP. Valio's interface,
+rules and approvals do not change.
+
+```
+Chef speaks ──> ElevenLabs speech-to-text ──> buyer agent (Gemini) ──JSON/MCP──> Valio ──> placed / pending / error
+                                                     │
+Chef hears <── ElevenLabs text-to-speech <── agent's short answer ("waiting for your approval because…")
+```
+
+1. Add `ELEVENLABS_API_KEY` to `.env` and restart. The top bar shows `ElevenLabs ✓`.
+2. **Agent console → Free text:** pick the buyer, click **🎙 Speak**, say the request, click **■ Stop**.
+   The text box fills in **live while you speak** (ElevenLabs Scribe realtime over WebSocket; any language, Finnish
+   works, e.g. *"Tarvitsen 60 litraa laktoositonta maitoa maanantaiksi"*). On Stop the agent runs with that text.
+   The browser gets a 15-minute single-use token from our server, so the API key never leaves the server. If live
+   streaming is unavailable, it falls back to record-then-transcribe (Scribe v2).
+3. With **Read answers aloud** on, the agent's final answer is spoken (order codes and markdown are dropped,
+   prices read as euros). Every agent message also has a **▶ Listen** button.
+
+The buyer's exact words, spoken or typed, are kept verbatim in `need.text`, so the approver sees what was actually
+said. Settings: `ELEVENLABS_VOICE_ID`, `ELEVENLABS_TTS_MODEL`, `ELEVENLABS_STT_MODEL`, `ELEVENLABS_REALTIME_MODEL`
+(see `.env.example`). The API key needs the speech-to-text and text-to-speech permissions.
+The key stays on the server; the browser only talks to `/api/ui/agent/voice/*`.
+
 ## Demo overlay (top bar)
 
 Valio's mock API is static: it ignores the requested date, stock and prices never change, and the cheapest milk
@@ -167,7 +194,7 @@ order_service/ valio_client.py (APIs: cap 50, 2-min cache, quirks), offers.py (f
                buyers.json (customers + mandates), scenarios.json (demo overlays), crosscheck.py (AI cross-check)
 mcp_server/    server.py: the 5 agent tools
 ui/            app.py (FastAPI: /mcp, /v1, /api/ui), static/ (approval UI)
-agent/         buyer_agent.py: reference buyer agent (Gemini or scripted), external MCP client
+agent/         buyer_agent.py: reference buyer agent (Gemini or scripted), external MCP client; voice.py: ElevenLabs speech
 demo/          presets.json: the scripted demo runs
 docs/          INTERFACE.md: tools, data contract, rules, assumptions, next steps
 tests/         offline tests of search, plan, both gates, signing, allergen policy

@@ -122,3 +122,7 @@ fieldset.allergens legend { font-size: 12.5px; color: var(--muted); padding: 0 4
 .said-understood.three { grid-template-columns: 1fr 1fr 1fr; }
 .doubt { background: var(--warn-bg); }
 @media (max-width: 760px) { .said-understood.three { grid-template-columns: 1fr; } }
+.voice-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.speak-toggle { display: flex; gap: 6px; align-items: center; color: var(--muted); font-size: 13px; }
+#mic.recording { background: var(--warn-bg); color: var(--warn); border-color: var(--warn); }
+.play { margin-left: 8px; padding: 1px 8px; font-size: 12px; font-weight: 500; background: transparent; color: var(--accent); border-color: var(--line); }

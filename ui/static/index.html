@@ -62,7 +62,12 @@
         <h3>Free text (Gemini agent)</h3>
         <label>Buyer <select id="llm-buyer"></select></label>
         <textarea id="llm-text" rows="3">I need 1,000 litres of lactose-free milk by Monday. Find an option that meets our requirements based on price and availability.</textarea>
-        <button id="llm-run">Run agent</button>
+        <div class="voice-row">
+          <button id="llm-run">Run agent</button>
+          <button id="mic" class="ghost" title="Speak to the buyer agent (ElevenLabs speech-to-text)">🎙 Speak</button>
+          <label class="speak-toggle"><input type="checkbox" id="speak-replies" checked> Read answers aloud</label>
+        </div>
+        <p id="voice-status" class="muted"></p>
         <p id="llm-note" class="muted"></p>
       </div>
     </div>
