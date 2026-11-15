@@ -23,21 +23,23 @@
       }
     },
     {
-      "id": "hotel-weekly-routine",
-      "title": "2. Routine weekly order -> placed automatically",
-      "buyer_key": "demo-hotel-aurora-key",
-      "text": "Our usual weekly 60 litres of lactose-free milk for Monday, please.",
+      "id": "bistro-milk-substitute",
+      "title": "2. Partial stock + substitute, mandate allows it -> placed automatically",
+      "buyer_key": "demo-bistro-satama-key",
+      "scenario": "milk_partial",
+      "text": "800 litres of lactose-free milk for Monday, cheapest option. Valio's substitutes are fine.",
       "need": {
-        "text": "Our usual weekly 60 litres of lactose-free milk for Monday, please.",
+        "text": "800 litres of lactose-free milk for Monday, cheapest option. Valio's substitutes are fine.",
         "query": "milk",
-        "quantity": 60,
+        "quantity": 800,
         "unit": "L",
         "deliver_by": "monday",
         "required_labels": [
           "lactose-free"
         ],
         "preferences": {
-          "priority": "price"
+          "priority": "price",
+          "allow_substitutes": true
         }
       }
     },
