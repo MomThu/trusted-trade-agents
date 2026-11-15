@@ -4,18 +4,7 @@ The Valio side of agentic ordering: an open interface (MCP + REST/OpenAPI) and a
 **any** external AI purchasing agent find, compare and order from Valio Aimo, while the **rules decide** and
 **humans sign off on exceptions**.
 
-> Look before buying, check twice, stay reversible.
-
-```
-Buyer (person) ── plain words ──> Buyer agent (any vendor) ── JSON tool calls ──> MCP server (/mcp)
-                                                                                   │
-  find_offers: local catalog filter ──> live price + stock (top candidates only) ──┤──> signed offers + suggested plan
-  place_order: Gate 1 request check ("did the agent understand?")                  │
-               Gate 2 policy ("is it allowed?", buyer mandate) ───> placed | pending_approval | rejected
-                                                                                   │
-  Approval UI (human): buyer said vs. agent understood ──> approve / reject / remove line
-  Order service + audit log: every outcome stored with its reason, for buyer and Valio
-```
+![Architecture: buyer → buyer agent → MCP/REST → find_offers → place_order → Gate 1 request check → Gate 2 policy → placed / pending approval / rejected → audit log](docs/architecture.png)
 
 ## Quick start
 
@@ -104,14 +93,17 @@ Edit them in the **Mandates** tab (changes are logged) or in `order_service/buye
 3. If the UI looks outdated after a code change, hard-reload once (`Cmd+Shift+R`).
 
 ### 2-minute pitch flow
-1. **Agent console → run 1** (1,000 L lactose-free milk). Point at the transcript: plain words in, JSON tool calls
-   to Valio, a split plan (600 + 400 of Valio's official substitute), outcome *pending approval*.
-2. **Approvals:** show *Buyer said* vs. *Agent understood*, the purple "Official substitute" badge and the reasons
-   (over €1,000, substitution, unusual quantity). Approve, or untick the substitute line and approve.
-3. **Agent console → run 2** (Bistro, 800 L milk): the same 600 + substitute split as run 1, but Bistro's mandate
-   allows substitutions and €918 is under its €2,500 limit, so it is placed with no human. **Orders:** "Cancel until Sun 17:00".
-4. **Agent console → run 4** (sea bass): the agent sends 100, Valio answers *"Try 96 or 102"*, the agent fixes it.
-5. **Mandates:** the hotel's limit and the school's allergen list are configuration. **Audit log:** the whole story,
+1. **Agent console → run 1** (Hotel, 100 kg sea bass): the agent sends 100 of a lot-6 product, Valio answers
+   *"Try 96 or 102"*, the agent fixes it; €1,775.82 is over the hotel's €1,000 limit → *pending approval*. Point at
+   the transcript: plain words in, JSON tool calls to Valio, precise errors back.
+2. **Run 2** (Bistro, 800 L milk): only 600 of the cheapest milk → plan adds Valio's official substitute; Bistro's
+   mandate allows substitutions and it is within its limit, so it is placed with no human. **Orders:** "Cancel until Sun 17:00".
+3. **Run 4** (Hotel, 1,000 L milk): the same split, but the hotel needs approval for substitutions and is over €1,000
+   → *pending approval*.
+4. **Approvals:** two orders wait (runs 1 and 4). On run 4 show *Buyer said* vs. *Agent understood*, the purple
+   "Official substitute" badge and the reasons (over €1,000, substitution, unusual quantity); approve, or untick the
+   substitute line and approve. Approve or reject run 1 (over the limit only).
+5. **Mandates:** the same request, two outcomes, because limits are configuration. **Audit log:** the whole story,
    with who did what and why.
 
 ### Longer walkthrough (extra points)
@@ -129,10 +121,10 @@ Reproducible, no LLM needed. A basic agent accepts Valio's suggested plan and fi
 
 | # | Buyer | Request | What it shows |
 |---|---|---|---|
-| 1 | Hotel Aurora | 1,000 L lactose-free milk by Monday | Cheapest milk has only 600 units → plan adds 400 of **Valio's official substitute** (ranked best). Substitution + over €1,000 + unusual quantity → **pending approval**; the manager can approve or drop a line |
+| 1 | Hotel Aurora | 100 kg sea bass | Agent sends 100 of a lot-6 product → *"Quantity 100 … is not a multiple of 6. Try 96 or 102."* → agent fixes itself (102 kg) → €1,775.82 is over the hotel's €1,000 limit → **pending approval** |
 | 2 | Bistro Satama | 800 L lactose-free milk, substitutes fine | Cheapest milk has only 600 units → plan adds 200 of **Valio's official substitute**. Bistro's mandate says substitutions need no approval and €918 is within its €2,500 limit → **placed automatically**, cancellable until cut-off (Sun 17:00) |
 | 3 | Koivu School | 40 kg potatoes | The agent declares **no** allergens, but Valio applies the school's standing list. Fresh produce has **no allergen statement** → never treated as safe → **pending approval** |
-| 4 | Bistro Satama | 100 kg sea bass | Agent sends 100 of a lot-6 product → *"Quantity 100 … is not a multiple of 6. Try 96 or 102."* → agent fixes itself → **placed** |
+| 4 | Hotel Aurora | 1,000 L lactose-free milk by Monday | Cheapest milk has only 600 units → plan adds 400 of **Valio's official substitute** (ranked best). Substitution + over €1,000 + unusual quantity → **pending approval**; the manager can approve or drop a line |
 | 5 | Hotel Aurora | 80 L lactose-free milk | Price rises between offer and order → `price_changed` → **pending approval** with old and new price |
 
 ## Free-text test cases (Agent console, right; needs `GEMINI_API_KEY`)
@@ -187,7 +179,7 @@ The key stays on the server; the browser only talks to `/api/ui/agent/voice/*`.
 |---|---|
 | Valio's price, availability and ping APIs, and the product, reliability and carbon files (downloaded from Valio's API) | **Order placement:** Valio has no order API, so orders are stored in our own order service (`orders.db`) |
 | Catalog search, signed offers, both gates, approvals, audit log | **Scripted demo runs:** the buyer's words → declared need is pre-written in `demo/presets.json`; the agent's behaviour is fixed so runs are reproducible |
-| The Gemini agent in free text and voice; the AI cross-check; ElevenLabs speech | **Demo overlay** for runs 1 and 5 (partial stock, price rise), always labelled |
+| The Gemini agent in free text and voice; the AI cross-check; ElevenLabs speech | **Demo overlay** for runs 2, 4 and 5 (partial stock, price rise), always labelled |
 | | **Order history:** there is no history API, so Reset seeds 4 past orders for Hotel Aurora |
 | | **Customers and keys:** three demo buyers with demo API keys in `order_service/buyers.json` |
 
@@ -199,7 +191,7 @@ led to are not yet linked in the audit log.
 ## Demo overlay (top bar)
 
 Valio's mock API is static: it ignores the requested date, stock and prices never change, and the cheapest milk
-has unlimited stock. Runs 1, 2 and 5 therefore switch on a labelled overlay that edits the live response:
+has unlimited stock. Runs 2, 4 and 5 therefore switch on a labelled overlay that edits the live response:
 
 | Overlay | Effect |
 |---|---|

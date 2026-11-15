@@ -2,23 +2,19 @@
   "_comment": "Scripted demo runs. `need` is what any buyer agent would declare from `text`. `scenario` turns on a labeled demo overlay for the whole run; `scenario_after_find` switches it on between find_offers and place_order (e.g. a price rise). `naive_first_quantity` makes the agent's first attempt sloppy to show self-correction.",
   "presets": [
     {
-      "id": "hotel-milk-partial",
-      "title": "1. Partial stock + substitute + over limit -> approval",
+      "id": "hotel-seabass-lot",
+      "title": "1. Wrong lot size -> precise error -> agent fixes it -> over limit -> approval",
       "buyer_key": "demo-hotel-aurora-key",
-      "scenario": "milk_partial",
-      "text": "I need 1,000 litres of lactose-free milk by Monday. Find an option that meets our requirements based on price and availability.",
+      "naive_first_quantity": 100,
+      "text": "100 kg of sea bass for Monday, cheapest option.",
       "need": {
-        "text": "I need 1,000 litres of lactose-free milk by Monday. Find an option that meets our requirements based on price and availability.",
-        "query": "milk",
-        "quantity": 1000,
-        "unit": "L",
+        "text": "100 kg of sea bass for Monday, cheapest option.",
+        "query": "sea bass",
+        "quantity": 100,
+        "unit": "KG",
         "deliver_by": "monday",
-        "required_labels": [
-          "lactose-free"
-        ],
         "preferences": {
-          "priority": "price",
-          "allow_substitutes": true
+          "priority": "price"
         }
       }
     },
@@ -60,19 +56,23 @@
       }
     },
     {
-      "id": "bistro-seabass-lot",
-      "title": "4. Wrong lot size -> precise error -> agent fixes it",
-      "buyer_key": "demo-bistro-satama-key",
-      "naive_first_quantity": 100,
-      "text": "100 kg of sea bass for Monday, cheapest option.",
+      "id": "hotel-milk-partial",
+      "title": "4. Partial stock + substitute + over limit -> approval",
+      "buyer_key": "demo-hotel-aurora-key",
+      "scenario": "milk_partial",
+      "text": "I need 1,000 litres of lactose-free milk by Monday. Find an option that meets our requirements based on price and availability.",
       "need": {
-        "text": "100 kg of sea bass for Monday, cheapest option.",
-        "query": "sea bass",
-        "quantity": 100,
-        "unit": "KG",
+        "text": "I need 1,000 litres of lactose-free milk by Monday. Find an option that meets our requirements based on price and availability.",
+        "query": "milk",
+        "quantity": 1000,
+        "unit": "L",
         "deliver_by": "monday",
+        "required_labels": [
+          "lactose-free"
+        ],
         "preferences": {
-          "priority": "price"
+          "priority": "price",
+          "allow_substitutes": true
         }
       }
     },

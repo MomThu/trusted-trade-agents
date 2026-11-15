@@ -155,7 +155,7 @@ Order states: `placed`, `pending_approval`, `approved` (= placed after sign-off)
 - **Empty `scheduleLines`** = not deliverable; `availableAmount 0` = out of stock; `availableDate > deliver_by` = late.
 - **`closingTime`** = order cut-off for that delivery; used as the cancel window. The mock returns fixed cut-offs
   (Terminal: 12.11 15:00, already passed for Monday), so Terminal products are flagged and kept out of the plan.
-- The mock **ignores `requestedDate`** and stock is static, hence the labeled demo overlay for runs 1 and 5.
+- The mock **ignores `requestedDate`** and stock is static, hence the labeled demo overlay for runs 2, 4 and 5.
 - **Litres/kg per sales unit:** GS1 unit conversions × units per sales unit, else parsed from the name, then
   confirmed or corrected by the price API (`catalogPrice / comparisonPrice`, e.g. 31.31 / 1.57 ≈ 20 L).
 - **`allowedLotSize` 0.01** on cartons/pieces is treated as 1 (no fractional cartons); weight units keep the real step.
