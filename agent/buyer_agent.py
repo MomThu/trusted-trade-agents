@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import copy
 import json
 import os
 from datetime import date, timedelta
@@ -62,7 +63,7 @@ def brief(tool: str, r: dict) -> str:
 
 
 async def _call(session: ClientSession, tool: str, args: dict, on_event: Event) -> dict:
-    on_event({"kind": "tool_call", "tool": tool, "args": args})
+    on_event({"kind": "tool_call", "tool": tool, "args": copy.deepcopy(args)})  # snapshot: args are mutated on retry
     res = await session.call_tool(tool, args)
     data: Any = res.structuredContent
     if isinstance(data, dict) and set(data) == {"result"}:
