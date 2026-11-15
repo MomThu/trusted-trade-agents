@@ -108,7 +108,8 @@ Edit them in the **Mandates** tab (changes are logged) or in `order_service/buye
    to Valio, a split plan (600 + 400 of Valio's official substitute), outcome *pending approval*.
 2. **Approvals:** show *Buyer said* vs. *Agent understood*, the purple "Official substitute" badge and the reasons
    (over €1,000, substitution, unusual quantity). Approve, or untick the substitute line and approve.
-3. **Agent console → run 2** (weekly 60 L): placed with no human. **Orders:** "Cancel until Sun 17:00".
+3. **Agent console → run 2** (Bistro, 800 L milk): the same 600 + substitute split as run 1, but Bistro's mandate
+   allows substitutions and €918 is under its €2,500 limit, so it is placed with no human. **Orders:** "Cancel until Sun 17:00".
 4. **Agent console → run 4** (sea bass): the agent sends 100, Valio answers *"Try 96 or 102"*, the agent fixes it.
 5. **Mandates:** the hotel's limit and the school's allergen list are configuration. **Audit log:** the whole story,
    with who did what and why.
@@ -129,7 +130,7 @@ Reproducible, no LLM needed. A basic agent accepts Valio's suggested plan and fi
 | # | Buyer | Request | What it shows |
 |---|---|---|---|
 | 1 | Hotel Aurora | 1,000 L lactose-free milk by Monday | Cheapest milk has only 600 units → plan adds 400 of **Valio's official substitute** (ranked best). Substitution + over €1,000 + unusual quantity → **pending approval**; the manager can approve or drop a line |
-| 2 | Hotel Aurora | weekly 60 L lactose-free milk | Within mandate, no flags → **placed automatically**, cancellable until cut-off (Sun 17:00) |
+| 2 | Bistro Satama | 800 L lactose-free milk, substitutes fine | Cheapest milk has only 600 units → plan adds 200 of **Valio's official substitute**. Bistro's mandate says substitutions need no approval and €918 is within its €2,500 limit → **placed automatically**, cancellable until cut-off (Sun 17:00) |
 | 3 | Koivu School | 40 kg potatoes | The agent declares **no** allergens, but Valio applies the school's standing list. Fresh produce has **no allergen statement** → never treated as safe → **pending approval** |
 | 4 | Bistro Satama | 100 kg sea bass | Agent sends 100 of a lot-6 product → *"Quantity 100 … is not a multiple of 6. Try 96 or 102."* → agent fixes itself → **placed** |
 | 5 | Hotel Aurora | 80 L lactose-free milk | Price rises between offer and order → `price_changed` → **pending approval** with old and new price |
@@ -198,7 +199,7 @@ led to are not yet linked in the audit log.
 ## Demo overlay (top bar)
 
 Valio's mock API is static: it ignores the requested date, stock and prices never change, and the cheapest milk
-has unlimited stock. Runs 1 and 5 therefore switch on a labelled overlay that edits the live response:
+has unlimited stock. Runs 1, 2 and 5 therefore switch on a labelled overlay that edits the live response:
 
 | Overlay | Effect |
 |---|---|
